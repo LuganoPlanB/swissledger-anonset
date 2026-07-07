@@ -2,32 +2,116 @@ name: test
 
 on:
   push:
+    branches: [main, master]
   pull_request:
 
+env:
+  RPC_URL: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
+  CHAIN_ID: 222
+
 jobs:
-  test:
+  # ── fast checks (no chain needed) ──────────────────────────────────────
+  unit:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
 
-      - name: Setup Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: stable
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
 
-      - name: Install Node dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Generate local keyring
-        run: ./scripts/keygen
+      - name: Forge build + test
+        run: |
+          forge clean
+          node scripts/generate-build-info.mjs
+          forge build --evm-version london
+          forge test -vvv --evm-version london
 
-      - name: Run full test surface
-        run: make test-all
+      - name: Node client tests
+        run: node --test clients/anonset/anonset.test.mjs
+
+  # ── on-chain smoke (testnet deploy + verify) ───────────────────────────
+  smoke:
+    needs: unit
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
+
+      - run: npm ci
+      - run: node scripts/generate-build-info.mjs
+      - run: forge build --evm-version london
+
+      - name: Deploy SemaphoreVerifier
+        env:
+          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+        run: |
+          forge create node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
+            --legacy --gas-price 0 --chain "$CHAIN_ID" \
+            --broadcast --json > verifier.json
+          echo "verifier=$(jq -r .deployedTo verifier.json)" >> "$GITHUB_OUTPUT"
+        id: deploy-verifier
+
+      - name: Deploy Semaphore
+        env:
+          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+        run: |
+          forge create node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
+            --legacy --gas-price 0 --chain "$CHAIN_ID" \
+            --broadcast --json \
+            --constructor-args "${{ steps.deploy-verifier.outputs.verifier }}" \
+            > semaphore.json
+          echo "semaphore=$(jq -r .deployedTo semaphore.json)" >> "$GITHUB_OUTPUT"
+        id: deploy-semaphore
+
+      - name: Deploy MerkleRootRegistryZK
+        env:
+          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+        run: |
+          forge create src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
+            --legacy --gas-price 0 --chain "$CHAIN_ID" \
+            --broadcast --json \
+            --constructor-args "${{ steps.deploy-semaphore.outputs.semaphore }}" \
+            > registry.json
+          echo "registry=$(jq -r .deployedTo registry.json)" >> "$GITHUB_OUTPUT"
+        id: deploy-registry
+
+      - name: Smoke — add member and query state
+        env:
+          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+        run: |
+          REGISTRY="${{ steps.deploy-registry.outputs.registry }}"
+
+          # Add a test commitment
+          COMMITMENT=11005642493773047649202648265396872197147567800455247120861783398111750817516
+          cast send "$REGISTRY" "addMember(uint256)" "$COMMITMENT" \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
+            --legacy --gas-price 0 --chain "$CHAIN_ID"
+
+          # Verify state
+          COUNT=$(cast call "$REGISTRY" "memberCount()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
+          ROOT=$(cast call "$REGISTRY" "activeRoot()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
+          VERSION=$(cast call "$REGISTRY" "version()(string)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
+
+          echo "members:  $COUNT"
+          echo "root:     $ROOT"
+          echo "version:  $VERSION"
+
+          test "$COUNT" != "0" || { echo "FAIL: empty group after addMember"; exit 1; }
+          test "$ROOT"  != "0" || { echo "FAIL: zero root after addMember"; exit 1; }
+          test -n "$VERSION"   || { echo "FAIL: no version string"; exit 1; }
+
+          echo "PASS: on-chain smoke test"

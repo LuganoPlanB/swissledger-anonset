@@ -2,42 +2,31 @@ name: release
 
 on:
   push:
-    branches:
-      - master
-      - main
+    branches: [main, master]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
 
-      - name: Setup Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: stable
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
 
-      - name: Install Node dependencies
-        run: npm ci
+      - run: npm ci
+      - run: node scripts/generate-build-info.mjs
+      - run: forge build --evm-version london
+      - run: forge test -vvv --evm-version london
 
-      - name: Verify build and tests
-        run: make test
-
-      - name: Release
+      - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
