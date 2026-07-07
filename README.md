@@ -6,35 +6,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Swissledger AnonSet
 
-Zero-knowledge anonymous membership proofs using the Semaphore v4 protocol,
+Zero-knowledge anonymous set membership using the Semaphore v4 protocol,
 deployed on the Swissledger chain (ID 110).
 
-This repository builds a Merkle-based anonymous membership registry and its
-local client. Anyone can prove they are in the on-chain group without revealing
-their identity — the contract verifies a succinct Groth16 ZK proof.
-
-## How it works
-
-1. **Owner** adds identity commitments to an on-chain Semaphore group.
-2. **Member** holds the secret corresponding to their commitment.
-3. **Member** generates a ZK proof off-chain proving:
-   > "I know a secret whose commitment is in this Merkle tree."
-4. **Anyone** calls `verifyMembership()` on-chain. The contract verifies only
-   the ZK proof — it learns nothing about the leaf or the path.
-
-No nullifier tracking is performed. Members may prove inclusion as many times
-as they want. For replay-protected claims, use the parent Semaphore contract's
-`validateProof` directly.
-
-## Architecture
-
-| Layer | Technology |
-|---|---|
-| ZK circuits | Semaphore v4 (Poseidon hash, Groth16) |
-| On-chain Merkle tree | LeanIMT (via SemaphoreGroups) |
-| Contract | `MerkleRootRegistryZK.sol` |
-| Proof generation | `@semaphore-protocol/proof` (off-chain, JS) |
-| Client | Node.js ESM CLI (`anonset-cli.mjs`) |
+Prove you belong to an on-chain group without revealing your identity — the
+contract verifies a succinct Groth16 ZK proof while learning nothing about
+your leaf, your path, or your position. No nullifier tracking.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -46,36 +23,81 @@ as they want. For replay-protected claims, use the parent Semaphore contract's
 ┌─────────────────────────────────────────────────────────┐
 │                       On-chain                            │
 │  MerkleRootRegistryZK ──► Semaphore.verifyProof()        │
-│                           └── Groth16 verifier            │
+│                           └── Groth16 pairing check       │
 │                           └── Merkle root matches group   │
 └─────────────────────────────────────────────────────────┘
 ```
 
+## Performance
+
+| Operation | Time | Where |
+|---|---|---|
+| `Identity.create()` | **22 ms** | off-chain |
+| `Identity.create(key)` | **21 ms** | off-chain |
+| `Group(2 members)` | **0.6 ms** | off-chain |
+| `Group(10 members)` | **1.2 ms** | off-chain |
+| `generateProof` (2 leaves) | **404 ms** | off-chain |
+| `generateProof` (10 leaves) | **190 ms** | off-chain |
+| `verifyProof` (local) | **15 ms** | off-chain |
+| `verifyMembership` (ZK proof) | 258,755 gas (~259 ms) | on-chain |
+| `addMember` | 117,292 gas (~117 ms) | on-chain |
+| `addMembers` (2 leaves) | 217,740 gas (~218 ms) | on-chain |
+| `activeRoot` / `memberCount` | ~3,000 gas (~3 ms) | on-chain |
+
+### Deployment costs
+
+| Contract | Gas | Size |
+|---|---|---|
+| `PoseidonT3` | 3,375,785 | 16.9 KB |
+| `SemaphoreVerifier` | 3,720,276 | 30.4 KB |
+| `Semaphore` | 1,827,134 | 8.3 KB |
+| `MerkleRootRegistryZK` | 1,243,236 | 5.4 KB |
+| **Total** | **10,166,431** | |
+
+On-chain times are estimated at ~1M gas/second execution.
+
+## Architecture
+
+| Layer | Technology |
+|---|---|
+| ZK circuits | Semaphore v4 (Poseidon hash, Groth16) |
+| On-chain Merkle tree | LeanIMT (via SemaphoreGroups) |
+| Contract | `MerkleRootRegistryZK.sol` |
+| Proof generation | `@semaphore-protocol/proof` (off-chain, JS) |
+| Proof verification | `SemaphoreVerifier.sol` (on-chain pairing check) |
+| Client | Node.js ESM CLI (`anonset-cli.mjs`) |
+
 ## Quick start
 
 ```bash
-make setup    # install Foundry + npm dependencies + generate keys
-make build    # regenerate BuildInfo.sol + compile
-make test     # full suite (client + solidity + smoke)
+make setup    # install npm dependencies + generate keys
+make build    # regenerate BuildInfo.sol + compile (swissledger-forge)
+make test     # full suite: client + solidity + smoke
 ```
 
-## Commands
+## Contract API
 
-```bash
-make test-client    # Node.js tests only
-make test-solidity  # forge test only
-make test-smoke     # local Anvil e2e deployment
+```solidity
+// Permissioned group management
+function addMember(uint256 identityCommitment) external returns (uint256 root);
+function addMembers(uint256[] identityCommitments) external returns (uint256 root);
+function removeMember(uint256 identityCommitment, uint256[] proof) external returns (uint256 root);
+
+// Anonymous membership verification (no nullifier tracking — unlimited proofs)
+function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256[8] points) external returns (bool);
+function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256 msg, uint256[8] points) external returns (bool);
+
+// Queries
+function activeRoot() external view returns (uint256);
+function memberCount() external view returns (uint256);
+function version() external pure returns (string memory);
 ```
 
 ## Client CLI
 
-The client mirrors the `swissledger-merkle` CLI interface but generates
-Semaphore ZK proofs instead of plain Merkle proofs.
-
 ```bash
 # Create an identity
 npm run anonset -- identity create
-# → { privateKey: "0x...", commitment: "..." }
 
 # Generate a ZK proof
 npm run anonset -- proof generate identity.json group.json
@@ -87,57 +109,30 @@ npm run anonset -- verify local proof.json
 npm run anonset -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
 ```
 
-See [clients/anonset/README.md](clients/anonset/README.md) for details.
+See [clients/anonset/README.md](clients/anonset/README.md) for the full workflow.
 
 ## Deployment
 
 ```bash
-# Against local Anvil
-forge script script/DeployMerkleRootRegistryZK.s.sol \
-  --rpc-url anvil --broadcast
+# Local
+swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol --rpc-url anvil --broadcast
 
-# Against a real chain (e.g., Swissledger)
-forge script script/DeployMerkleRootRegistryZK.s.sol \
-  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --legacy
+# Production (Swissledger chain ID 110)
+swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol \
+  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --legacy --gas-price 0
 ```
 
-The deploy script deploys three contracts:
-1. `SemaphoreVerifier` — Groth16 verifier for Semaphore circuits
-2. `Semaphore` — on-chain group management + proof routing
-3. `MerkleRootRegistryZK` — anonymous membership registry
-
-## Contract API
-
-```solidity
-// Permissioned group management
-function addMember(uint256 identityCommitment) external onlyMemberManager returns (uint256 root);
-function addMembers(uint256[] calldata identityCommitments) external onlyMemberManager returns (uint256 root);
-function removeMember(uint256 identityCommitment, uint256[] calldata proof) external onlyMemberManager returns (uint256 root);
-
-// Anonymous membership verification (no nullifier tracking)
-function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256[8] points) external returns (bool);
-function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256 msg, uint256[8] points) external returns (bool);
-
-// Queries
-function activeRoot() external view returns (uint256);
-function memberCount() external view returns (uint256);
-function version() external pure returns (string memory);
-```
+The deploy script deploys the full stack: `SemaphoreVerifier` → `Semaphore` → `MerkleRootRegistryZK`.
 
 ## Chain compatibility
 
-The project is built exclusively with **swissledger-foundry**, a Swissledger-fork
-of Foundry preconfigured with `evm_version = "istanbul"` matching the chain's
-pre-Shanghai EVM. The chain's engine natively supports PUSH0/MCOPY even when the
-compiler targets istanbul, so no special workarounds are needed.
-
-Always use `--legacy` and `--gas-price 0` for transactions.
+Built exclusively with **swissledger-foundry** (`evm_version = "istanbul"`).
+Always use `--legacy` and `--gas-price 0` for on-chain transactions.
 
 ## Versioning
 
 `semantic-release` computes the next SemVer version from conventional commits.
-The Solidity build embeds the current project version via `BuildInfo.sol`,
-exposed through `MerkleRootRegistryZK.version()`.
+The build embeds it via `BuildInfo.sol` → `MerkleRootRegistryZK.version()`.
 
 # Licensing
 
