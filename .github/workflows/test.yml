@@ -10,7 +10,6 @@ env:
   CHAIN_ID: 222
 
 jobs:
-  # ── fast checks (no chain needed) ──────────────────────────────────────
   unit:
     runs-on: ubuntu-latest
     steps:
@@ -19,8 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
 
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: stable }
+      - uses: LuganoPlanB/swissledger-foundry/.github/actions/setup@main
 
       - run: npm ci
 
@@ -28,13 +26,12 @@ jobs:
         run: |
           forge clean
           node scripts/generate-build-info.mjs
-          forge build --evm-version london
-          forge test -vvv --evm-version london
+          forge build
+          forge test -vvv
 
       - name: Node client tests
         run: node --test clients/anonset/anonset.test.mjs
 
-  # ── on-chain smoke (testnet deploy + verify) ───────────────────────────
   smoke:
     needs: unit
     runs-on: ubuntu-latest
@@ -45,12 +42,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
 
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: stable }
+      - uses: LuganoPlanB/swissledger-foundry/.github/actions/setup@main
 
       - run: npm ci
       - run: node scripts/generate-build-info.mjs
-      - run: forge build --evm-version london
+      - run: forge build
 
       - name: Deploy SemaphoreVerifier
         env:
@@ -95,13 +91,11 @@ jobs:
         run: |
           REGISTRY="${{ steps.deploy-registry.outputs.registry }}"
 
-          # Add a test commitment
           COMMITMENT=11005642493773047649202648265396872197147567800455247120861783398111750817516
           cast send "$REGISTRY" "addMember(uint256)" "$COMMITMENT" \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
             --legacy --gas-price 0 --chain "$CHAIN_ID"
 
-          # Verify state
           COUNT=$(cast call "$REGISTRY" "memberCount()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
           ROOT=$(cast call "$REGISTRY" "activeRoot()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
           VERSION=$(cast call "$REGISTRY" "version()(string)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
