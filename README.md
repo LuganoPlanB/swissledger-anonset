@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 PlanB foundation
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# Swissledger MerkleZK
+# Swissledger AnonSet
 
 Zero-knowledge anonymous membership proofs using the Semaphore v4 protocol,
 deployed on the Swissledger chain (ID 110).
@@ -34,7 +34,7 @@ as they want. For replay-protected claims, use the parent Semaphore contract's
 | On-chain Merkle tree | LeanIMT (via SemaphoreGroups) |
 | Contract | `MerkleRootRegistryZK.sol` |
 | Proof generation | `@semaphore-protocol/proof` (off-chain, JS) |
-| Client | Node.js ESM CLI (`merklezk-cli.mjs`) |
+| Client | Node.js ESM CLI (`anonset-cli.mjs`) |
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -74,20 +74,20 @@ Semaphore ZK proofs instead of plain Merkle proofs.
 
 ```bash
 # Create an identity
-npm run merklezk -- identity create
+npm run anonset -- identity create
 # → { privateKey: "0x...", commitment: "..." }
 
 # Generate a ZK proof
-npm run merklezk -- proof generate identity.json group.json
+npm run anonset -- proof generate identity.json group.json
 
 # Verify locally (no chain needed)
-npm run merklezk -- verify local proof.json
+npm run anonset -- verify local proof.json
 
 # Verify on-chain
-npm run merklezk -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
+npm run anonset -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
 ```
 
-See [clients/merklezk/README.md](clients/merklezk/README.md) for details.
+See [clients/anonset/README.md](clients/anonset/README.md) for details.
 
 ## Deployment
 
@@ -126,18 +126,12 @@ function version() external pure returns (string memory);
 
 ## Chain compatibility
 
-The Swissledger chain (ID 110) is **pre-Shanghai** — no PUSH0 or MCOPY support.
-This project compiles with `evm_version = "london"` + `via_ir = true` to
-avoid emitting those opcodes.
+The project is built exclusively with **swissledger-foundry**, a Swissledger-fork
+of Foundry preconfigured with `evm_version = "istanbul"` matching the chain's
+pre-Shanghai EVM. The chain's engine natively supports PUSH0/MCOPY even when the
+compiler targets istanbul, so no special workarounds are needed.
 
-Always use `--legacy` and `--gas-price 0` for transactions, and verify that
-the deployed bytecode contains no forbidden opcodes:
-
-```bash
-forge inspect MerkleRootRegistryZK bytecode |
-  grep -o '5f\|5e' | wc -l
-# Should return 0 for both PUSH0 (0x5f) and MCOPY (0x5e)
-```
+Always use `--legacy` and `--gas-price 0` for transactions.
 
 ## Versioning
 
@@ -147,7 +141,7 @@ exposed through `MerkleRootRegistryZK.version()`.
 
 # Licensing
 
-Swissledger MerkleZK is Copyright (C) 2026 PlanB Foundation
+Swissledger AnonSet is Copyright (C) 2026 PlanB Foundation
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as

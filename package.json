@@ -1,16 +1,16 @@
 {
-  "name": "swissledger-merklezk",
+  "name": "swissledger-anonset",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test clients/merklezk/*.test.mjs",
+    "test": "node --test clients/anonset/*.test.mjs",
     "generate:build-info": "node scripts/generate-build-info.mjs",
-    "merklezk": "node clients/merklezk/merklezk-cli.mjs",
-    "generate-proof": "node clients/merklezk/merklezk-cli.mjs proof",
-    "verify-proof": "node clients/merklezk/merklezk-cli.mjs verify",
-    "create-group": "node clients/merklezk/merklezk-cli.mjs group create",
-    "add-member": "node clients/merklezk/merklezk-cli.mjs group add-member",
+    "anonset": "node clients/anonset/anonset-cli.mjs",
+    "generate-proof": "node clients/anonset/anonset-cli.mjs proof",
+    "verify-proof": "node clients/anonset/anonset-cli.mjs verify",
+    "create-group": "node clients/anonset/anonset-cli.mjs group create",
+    "add-member": "node clients/anonset/anonset-cli.mjs group add-member",
     "release": "semantic-release"
   },
   "dependencies": {

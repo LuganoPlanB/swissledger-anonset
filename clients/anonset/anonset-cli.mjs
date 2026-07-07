@@ -126,18 +126,18 @@ async function cmdVerifyLocal(proofPath) {
 // ---------------------------------------------------------------------------
 
 const USAGE = `Usage:
-  npm run merklezk -- identity create [private-key-hex]
-  npm run merklezk -- proof generate <identity.json> <group.json> [message] [scope]
-  npm run merklezk -- verify on-chain <contract-address> <proof.json> <rpc-url>
-  npm run merklezk -- verify local <proof.json>
+  npm run anonset -- identity create [private-key-hex]
+  npm run anonset -- proof generate <identity.json> <group.json> [message] [scope]
+  npm run anonset -- verify on-chain <contract-address> <proof.json> <rpc-url>
+  npm run anonset -- verify local <proof.json>
 
 Examples:
-  npm run merklezk -- identity create
-  npm run merklezk -- identity create 0xabcdef...
-  npm run merklezk -- proof generate identity.json group.json
-  npm run merklezk -- proof generate identity.json group.json "my-vote" "election-42"
-  npm run merklezk -- verify local proof.json
-  npm run merklezk -- verify on-chain 0x123... proof.json https://rpc.example.com
+  npm run anonset -- identity create
+  npm run anonset -- identity create 0xabcdef...
+  npm run anonset -- proof generate identity.json group.json
+  npm run anonset -- proof generate identity.json group.json "my-vote" "election-42"
+  npm run anonset -- verify local proof.json
+  npm run anonset -- verify on-chain 0x123... proof.json https://rpc.example.com
 `;
 
 async function run() {

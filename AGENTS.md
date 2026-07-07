@@ -1,4 +1,4 @@
-# Swissledger MerkleZK — Agent Reference
+# Swissledger AnonSet — Agent Reference
 
 ## Project Map
 
@@ -6,8 +6,8 @@
 |---|---|---|
 | Solidity contracts | `src/` | `MerkleRootRegistryZK.sol`, `BuildInfo.sol` |
 | Tests (Solidity) | `test/` | `forge test` via swissledger-foundry |
-| Tests (Node) | `clients/merklezk/*.test.mjs` | `node --test` |
-| Off-chain client | `clients/merklezk/merklezk-cli.mjs` | Identity, proof generation, verification |
+| Tests (Node) | `clients/anonset/*.test.mjs` | `node --test` |
+| Off-chain client | `clients/anonset/anonset-cli.mjs` | Identity, proof generation, verification |
 | Deploy script | `script/DeployMerkleRootRegistryZK.s.sol` | Full Semaphore stack deployment |
 | Scripts | `scripts/` | install-deps, keygen, build-info gen, e2e-smoke, rpc-proxy |
 | Config | `foundry.toml`, `package.json`, `GNUmakefile`, `mise.toml` |

@@ -9,8 +9,8 @@ import { Group } from "@semaphore-protocol/group";
 import { generateProof, verifyProof } from "@semaphore-protocol/proof";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI = path.resolve(__dirname, "merklezk-cli.mjs");
-const TMP = path.resolve(__dirname, "..", "..", "fixtures", "merklezk");
+const CLI = path.resolve(__dirname, "anonset-cli.mjs");
+const TMP = path.resolve(__dirname, "..", "..", "fixtures", "anonset");
 
 function runCli(args) {
     return execSync(`node ${CLI} ${args}`, { encoding: "utf8", cwd: __dirname }).trim();
@@ -23,7 +23,7 @@ function cliJson(args) {
     return JSON.parse(runCli(args));
 }
 
-describe("merklezk CLI — identity", () => {
+describe("anonset CLI — identity", () => {
     it("creates a random identity", () => {
         const result = cliJson("identity create");
         assert.ok(result.privateKey, "missing privateKey");
@@ -48,7 +48,7 @@ describe("merklezk CLI — identity", () => {
     });
 });
 
-describe("merklezk CLI — proof generation", () => {
+describe("anonset CLI — proof generation", () => {
     const tmpDir = TMP;
 
     function setup() {
@@ -146,7 +146,7 @@ describe("merklezk CLI — proof generation", () => {
     });
 });
 
-describe("merklezk CLI — verify local", () => {
+describe("anonset CLI — verify local", () => {
     const tmpDir = TMP;
 
     function setupVerify() {
@@ -182,7 +182,7 @@ describe("merklezk CLI — verify local", () => {
     });
 });
 
-describe("merklezk CLI — help", () => {
+describe("anonset CLI — help", () => {
     it("prints usage with --help", () => {
         const output = runCli("--help");
         assert.match(output, /Usage/);

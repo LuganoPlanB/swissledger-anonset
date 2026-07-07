@@ -4,9 +4,9 @@ SPDX-FileCopyrightText: 2026 PlanB foundation
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# MerkleZK CLI
+# AnonSet CLI
 
-Zero-knowledge Merkle proof client for `swissledger-merklezk`.
+Zero-knowledge Merkle proof client for `swissledger-anonset`.
 
 Uses the Semaphore v4 protocol to generate and verify Groth16 ZK proofs
 of anonymous membership. Proves "I am in this Merkle group" without
@@ -21,7 +21,7 @@ npm ci
 ## Help
 
 ```bash
-npm run merklezk -- --help
+npm run anonset -- --help
 ```
 
 ## Commands
@@ -30,10 +30,10 @@ npm run merklezk -- --help
 
 ```bash
 # Random identity
-npm run merklezk -- identity create
+npm run anonset -- identity create
 
 # Deterministic identity from a private key
-npm run merklezk -- identity create 0xabcdef1234...
+npm run anonset -- identity create 0xabcdef1234...
 ```
 
 Output:
@@ -51,8 +51,8 @@ The commitment is public and gets added to the on-chain group.
 ### Generate a ZK proof
 
 ```bash
-npm run merklezk -- proof generate identity.json group.json
-npm run merklezk -- proof generate identity.json group.json "message" "scope"
+npm run anonset -- proof generate identity.json group.json
+npm run anonset -- proof generate identity.json group.json "message" "scope"
 ```
 
 Parameters:
@@ -77,7 +77,7 @@ Output:
 ### Verify a proof locally
 
 ```bash
-npm run merklezk -- verify local proof.json
+npm run anonset -- verify local proof.json
 ```
 
 Output: `true` or `false`
@@ -88,7 +88,7 @@ keys. No network access is needed.
 ### Verify a proof on-chain
 
 ```bash
-npm run merklezk -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
+npm run anonset -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
 ```
 
 Output: `true` or `false`
@@ -99,8 +99,8 @@ Calls `MerkleRootRegistryZK.verifyMembership()` on the deployed contract.
 
 ```bash
 # 1. Create two identities
-ID1=$(npm run --silent merklezk -- identity create)
-ID2=$(npm run --silent merklezk -- identity create)
+ID1=$(npm run --silent anonset -- identity create)
+ID2=$(npm run --silent anonset -- identity create)
 
 # Extract commitments
 COMMITMENT1=$(echo "$ID1" | jq -r '.commitment')
@@ -113,15 +113,15 @@ echo "$ID1" > identity.json
 echo "{\"members\": [\"$COMMITMENT1\", \"$COMMITMENT2\"]}" > group.json
 
 # 3. Generate proof for identity 1
-PROOF=$(npm run --silent merklezk -- proof generate identity.json group.json)
+PROOF=$(npm run --silent anonset -- proof generate identity.json group.json)
 
 # 4. Verify locally
 echo "$PROOF" > proof.json
-npm run --silent merklezk -- verify local proof.json
+npm run --silent anonset -- verify local proof.json
 # → true
 
 # 5. Verify on-chain (after adding commitments to the contract)
-npm run --silent merklezk -- verify on-chain 0xREGISTRY proof.json http://127.0.0.1:8545
+npm run --silent anonset -- verify on-chain 0xREGISTRY proof.json http://127.0.0.1:8545
 # → true
 ```
 
