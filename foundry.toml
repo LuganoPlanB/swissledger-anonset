@@ -1,0 +1,25 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["node_modules"]
+allow_paths = ["*"]
+remappings = [
+    "@semaphore/contracts/=node_modules/@semaphore-protocol/contracts/",
+    "@zk-kit/lean-imt.sol/=node_modules/@zk-kit-lean-imt/",
+    "forge-std/=node_modules/forge-std/src/",
+    "poseidon-solidity/=node_modules/poseidon-solidity/"
+]
+solc_version = "0.8.30"
+evm_version = "istanbul"
+optimizer = true
+optimizer_runs = 200
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+
+[rpc_endpoints]
+anvil = "http://127.0.0.1:8545"
