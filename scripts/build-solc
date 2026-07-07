@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build a compatible Solidity compiler from source when the system solc
+# is too new for the target EVM version.
+#
+# Swissledger chain (ID 110) does not support PUSH0/MCOPY.
+# Using --evm-version london is sufficient, but this script provides
+# an escape hatch if the system solc version is incompatible.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_DIR"
+
+SOLC_VERSION="${1:-0.8.26}"
+
+echo "==> Building solc ${SOLC_VERSION}..."
+mkdir -p solidity
+cd solidity
+
+if [ ! -d "solidity" ]; then
+    git clone https://github.com/ethereum/solidity.git
+    cd solidity
+    git checkout "v${SOLC_VERSION}"
+else
+    cd solidity
+fi
+
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j"$(nproc)" solc
+
+echo "==> solc built at: $(pwd)/solc/solc"

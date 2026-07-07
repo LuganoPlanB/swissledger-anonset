@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install Foundry (forge + cast) and npm dependencies.
+#
+# Prerequisites:
+#   - Node.js >= 24
+#   - npm (via mise or system)
+#   - curl (for Foundry installer)
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_DIR"
+
+echo "==> Installing Foundry..."
+if ! command -v forge &>/dev/null; then
+    curl -L https://foundry.paradigm.xyz | bash
+    # shellcheck disable=SC1091
+    "$HOME/.foundry/bin/foundryup"
+    export PATH="$HOME/.foundry/bin:$PATH"
+fi
+
+echo "==> Foundry version: $(forge --version)"
+
+echo "==> Installing npm dependencies..."
+npm ci
+
+echo "==> Setup complete."

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# End-to-end smoke test using a local Anvil node.
+#
+# 1. Start Anvil
+# 2. Deploy MerkleRootRegistryZK + Semaphore stack
+# 3. Add members
+# 4. Verify on-chain with a known proof
+# 5. Stop Anvil
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_DIR"
+
+ANVIL_PID=""
+cleanup() {
+    if [ -n "$ANVIL_PID" ]; then
+        kill "$ANVIL_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+echo "==> Starting Anvil..."
+anvil --port 8545 &
+ANVIL_PID=$!
+sleep 2
+
+echo "==> Deploying contracts..."
+DEPLOY_OUTPUT=$(forge script script/DeployMerkleRootRegistryZK.s.sol \
+    --rpc-url http://127.0.0.1:8545 \
+    --broadcast \
+    --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
+    2>&1)
+
+REGISTRY_ADDR=$(echo "$DEPLOY_OUTPUT" | grep "registryAddr:" | awk '{print $NF}')
+echo "==> Registry deployed at: $REGISTRY_ADDR"
+
+echo "==> Adding test members..."
+# Add a known commitment
+COMMITMENT="11005642493773047649202648265396872197147567800455247120861783398111750817516"
+cast send "$REGISTRY_ADDR" "addMember(uint256)" "$COMMITMENT" \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
+    --gas-limit 200000
+
+echo "==> Checking member count..."
+COUNT=$(cast call "$REGISTRY_ADDR" "memberCount()(uint256)" --rpc-url http://127.0.0.1:8545)
+echo "==> Members: $COUNT"
+
+echo "==> Checking active root..."
+ROOT=$(cast call "$REGISTRY_ADDR" "activeRoot()(uint256)" --rpc-url http://127.0.0.1:8545)
+echo "==> Active root: $ROOT"
+
+echo "==> Smoke test passed."

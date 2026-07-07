@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generate a local EVM keypair for testing.
+# Outputs:
+#   evm-private-key.txt  — 0x-prefixed private key
+#   evm-address.txt      — 0x-prefixed address
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_DIR"
+
+# Use cast to generate a wallet
+PRIVATE_KEY=$(cast wallet new --json | jq -r '.[0].private_key')
+ADDRESS=$(cast wallet address "$PRIVATE_KEY")
+
+echo "$PRIVATE_KEY" > evm-private-key.txt
+echo "$ADDRESS" > evm-address.txt
+
+echo "Keypair generated:"
+echo "  Address:      $ADDRESS"
+echo "  Private key:  evm-private-key.txt"
