@@ -5,52 +5,50 @@ on:
     branches: [main, master]
   pull_request:
 
-env:
-  RPC_URL: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
-  CHAIN_ID: 222
-
 jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
-
-      - uses: LuganoPlanB/swissledger-foundry/.github/actions/setup@main
-
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
       - run: npm ci
-
       - name: Forge build + test
         run: |
           forge clean
           node scripts/generate-build-info.mjs
-          forge build
+          forge build --evm-version london
           forge test -vvv
-
       - name: Node client tests
         run: node --test clients/anonset/anonset.test.mjs
 
   smoke:
     needs: unit
     runs-on: ubuntu-latest
-    if: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS != '' }}
+    env:
+      RPC_URL: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
+      PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+      CHAIN_ID: 222
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
-
-      - uses: LuganoPlanB/swissledger-foundry/.github/actions/setup@main
-
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
       - run: npm ci
       - run: node scripts/generate-build-info.mjs
-      - run: forge build
+      - run: forge build --evm-version london
+
+      - name: Check secrets
+        run: |
+          if [ -z "$RPC_URL" ] || [ -z "$PRIVATE_KEY" ]; then
+            echo "SKIP: testnet secrets not configured"
+            exit 0
+          fi
 
       - name: Deploy SemaphoreVerifier
-        env:
-          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
         run: |
           forge create node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
@@ -60,8 +58,6 @@ jobs:
         id: deploy-verifier
 
       - name: Deploy Semaphore
-        env:
-          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
         run: |
           forge create node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
@@ -73,8 +69,6 @@ jobs:
         id: deploy-semaphore
 
       - name: Deploy MerkleRootRegistryZK
-        env:
-          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
         run: |
           forge create src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
@@ -86,9 +80,8 @@ jobs:
         id: deploy-registry
 
       - name: Smoke — add member and query state
-        env:
-          PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
         run: |
+          if [ -z "$RPC_URL" ]; then echo "SKIP: no RPC"; exit 0; fi
           REGISTRY="${{ steps.deploy-registry.outputs.registry }}"
 
           COMMITMENT=11005642493773047649202648265396872197147567800455247120861783398111750817516

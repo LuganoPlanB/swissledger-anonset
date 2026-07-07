@@ -15,17 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
-
-      - uses: LuganoPlanB/swissledger-foundry/.github/actions/setup@main
-
+      - uses: foundry-rs/foundry-toolchain@v1
+        with: { version: stable }
       - run: npm ci
       - run: node scripts/generate-build-info.mjs
-      - run: forge build
+      - run: forge build --evm-version london
       - run: forge test -vvv
-
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
