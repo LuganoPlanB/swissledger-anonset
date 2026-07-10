@@ -185,7 +185,8 @@ contract DummyVerifier is ISemaphoreVerifier {
         uint256[2] calldata,
         uint256[2][2] calldata,
         uint256[2] calldata,
-        uint256[4] calldata
+        uint256[4] calldata,
+        uint256
     ) external pure returns (bool) {
         return false;
     }
