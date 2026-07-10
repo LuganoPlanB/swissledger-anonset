@@ -18,7 +18,11 @@ jobs:
         run: node scripts/generate-build-info.mjs
       - name: Forge build
         run: forge build
-      - name: Forge test
+      - name: Forge test (fast)
+        if: github.event_name == 'pull_request'
+        run: forge test --match-path 'test/*.fast.t.sol' -vvv
+      - name: Forge test (full)
+        if: github.event_name != 'pull_request'
         run: forge test -vvv
       - name: Node client tests
         run: node --test clients/anonset/anonset.test.mjs
