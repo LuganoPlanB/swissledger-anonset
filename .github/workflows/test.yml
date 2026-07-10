@@ -14,12 +14,12 @@ jobs:
         with: { node-version: 24, cache: npm }
       - uses: LuganoPlanB/swissledger-foundry@main
       - run: npm ci
-      - name: Forge build + test
-        run: |
-          forge clean
-          node scripts/generate-build-info.mjs
-          forge build
-          forge test -vvv
+      - name: Generate build info
+        run: node scripts/generate-build-info.mjs
+      - name: Forge build
+        run: forge build
+      - name: Forge test
+        run: forge test -vvv
       - name: Node client tests
         run: node --test clients/anonset/anonset.test.mjs
 
