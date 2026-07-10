@@ -7,7 +7,6 @@ libs = ["node_modules"]
 allow_paths = ["*"]
 remappings = [
     "@semaphore/contracts/=node_modules/@semaphore-protocol/contracts/",
-    "@zk-kit/lean-imt.sol/=node_modules/@zk-kit/lean-imt.sol/",
     "forge-std/=node_modules/forge-std/src/",
     "poseidon-solidity/=node_modules/poseidon-solidity/"
 ]
