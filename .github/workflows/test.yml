@@ -15,20 +15,29 @@ jobs:
       - uses: LuganoPlanB/swissledger-foundry@main
       - run: npm ci
       - name: Generate build info
-        run: node scripts/generate-build-info.mjs
+        run: |
+          echo "=== generating BuildInfo..."
+          node scripts/generate-build-info.mjs
       - name: Forge build
-        run: forge build
+        run: |
+          echo "=== forge build (compiling Solidity)..."
+          forge build
       - name: Forge test (fast)
         if: github.event_name == 'pull_request'
-        run: forge test -vvv
+        run: |
+          echo "=== forge test (fast suite)..."
+          forge test -vvv
       - name: Forge test (full)
         if: github.event_name != 'pull_request'
         run: |
+          echo "=== forge test (full suite)..."
           cp test-slow/*.t.sol test/
           forge test -vvv
           rm test/MerkleRootRegistryZK.t.sol
       - name: Node client tests
-        run: node --test clients/anonset/anonset.test.mjs
+        run: |
+          echo "=== node client tests..."
+          node --test clients/anonset/anonset.test.mjs
 
   smoke:
     needs: unit
@@ -43,8 +52,14 @@ jobs:
         with: { node-version: 24, cache: npm }
       - uses: LuganoPlanB/swissledger-foundry@main
       - run: npm ci
-      - run: node scripts/generate-build-info.mjs
-      - run: forge build
+      - name: Build info
+        run: |
+          echo "=== generating BuildInfo..."
+          node scripts/generate-build-info.mjs
+      - name: Forge build
+        run: |
+          echo "=== forge build (compiling Solidity)..."
+          forge build
 
       - name: Check secrets
         run: |
@@ -55,6 +70,7 @@ jobs:
 
       - name: Deploy SemaphoreVerifier
         run: |
+          echo "=== compiling + deploying SemaphoreVerifier (Groth16, heavy)..."
           forge create node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
             --legacy --gas-price 0 --chain "$CHAIN_ID" \
@@ -65,6 +81,7 @@ jobs:
 
       - name: Deploy Semaphore
         run: |
+          echo "=== deploying Semaphore..."
           forge create node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
             --legacy --gas-price 0 --chain "$CHAIN_ID" \
@@ -77,6 +94,7 @@ jobs:
 
       - name: Deploy MerkleRootRegistryZK
         run: |
+          echo "=== deploying MerkleRootRegistryZK..."
           forge create src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK \
             --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
             --legacy --gas-price 0 --chain "$CHAIN_ID" \
@@ -89,6 +107,7 @@ jobs:
 
       - name: Smoke — add member and query state
         run: |
+          echo "=== smoke: addMember + verify..."
           if [ -z "$RPC_URL" ]; then echo "SKIP: no RPC"; exit 0; fi
           REGISTRY="${{ steps.deploy-registry.outputs.registry }}"
 
