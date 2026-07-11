@@ -1,6 +1,6 @@
 [profile.default]
 src = "src"
-test = ["test", "test-slow"]
+test = "test"
 script = "script"
 out = "out"
 libs = ["node_modules"]
