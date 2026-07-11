@@ -91,12 +91,22 @@ if $SMOKE; then
     VERIFIER=$(jq -r .deployedTo /tmp/anonset-verifier.json)
     echo "  verifier: $VERIFIER"
 
+    banner "deploying PoseidonT3 (library)"
+    forge create node_modules/poseidon-solidity/PoseidonT3.sol:PoseidonT3 \
+      --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
+      --legacy --gas-price 0 --chain "$CHAIN_ID" \
+      --gas-limit 10000000 \
+      --broadcast --json > /tmp/anonset-poseidon.json
+    POSEIDON=$(jq -r .deployedTo /tmp/anonset-poseidon.json)
+    echo "  poseidon: $POSEIDON"
+
     banner "deploying Semaphore"
     forge create node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore \
       --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
       --legacy --gas-price 0 --chain "$CHAIN_ID" \
       --gas-limit 10000000 \
       --broadcast --json \
+      --libraries node_modules/poseidon-solidity/PoseidonT3.sol:PoseidonT3:$POSEIDON \
       --constructor-args "$VERIFIER" \
       > /tmp/anonset-semaphore.json
     SEMAPHORE=$(jq -r .deployedTo /tmp/anonset-semaphore.json)
