@@ -57,8 +57,13 @@ else
 fi
 
 # --- node tests ---
-banner "node client tests"
-node --test clients/anonset/anonset.test.mjs
+if $FULL; then
+  banner "node client tests (full suite — includes ZK proof generation)"
+  node --test clients/anonset/anonset.test.mjs
+else
+  banner "node client tests (fast suite — no ZK proof download)"
+  node --test clients/anonset/anonset.fast.test.mjs
+fi
 
 # --- smoke ---
 if $SMOKE; then
