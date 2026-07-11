@@ -43,7 +43,7 @@ jobs:
     needs: unit
     runs-on: ubuntu-latest
     env:
-      RPC_URL: ${{ secrets.SWISSLEDGER_TESTNET_RPC }}
+      RPC_URL: ${{ vars.SWISSLEDGER_TESTNET_RPC }}
       PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
       CHAIN_ID: 222
     steps:
