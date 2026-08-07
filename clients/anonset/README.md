@@ -6,131 +6,56 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # AnonSet CLI
 
-Zero-knowledge Merkle proof client for `swissledger-anonset`.
+The Node.js CLI generates Semaphore v4 proofs from a private identity file and
+can verify them locally or through the registry's reusable on-chain API.
 
-Uses the Semaphore v4 protocol to generate and verify Groth16 ZK proofs
-of anonymous membership. Proves "I am in this Merkle group" without
-revealing which leaf or path.
-
-## Setup
+## Setup and exact interface
 
 ```bash
 npm ci
-```
-
-## Help
-
-```bash
 npm run anonset -- --help
 ```
 
-## Commands
+```text
+anonset-cli identity create <identity.json> [private-key-hex] [--force]
+anonset-cli proof generate <identity.json> <group.json> [message] [scope]
+anonset-cli verify local <proof.json>
+anonset-cli verify on-chain <address> <proof.json> <rpc-url> <chain-id>
+```
 
-### Create an identity
+`group.json` contains `{"members":["<commitment>", ...]}`. Message and scope
+default to zero. For an on-chain proof, set scope to the registry's `groupId`;
+`verify on-chain` checks the supplied RPC's chain ID before its static
+`verifyMembership` call.
+
+## Safe workflow
 
 ```bash
-# Random identity
-npm run anonset -- identity create
-
-# Deterministic identity from a private key
-npm run anonset -- identity create 0xabcdef1234...
-```
-
-Output:
-
-```json
-{
-  "privateKey": "0x...",
-  "commitment": "123456..."
-}
-```
-
-**Important**: Save the private key. It is needed to generate proofs.
-The commitment is public and gets added to the on-chain group.
-
-### Generate a ZK proof
-
-```bash
-npm run anonset -- proof generate identity.json group.json
-npm run anonset -- proof generate identity.json group.json "message" "scope"
-```
-
-Parameters:
-- `identity.json` — output from `identity create`
-- `group.json` — `{ "members": ["commitment1", "commitment2", ...] }`
-- `message` (optional, default `"0"`) — arbitrary signal carried in the proof
-- `scope` (optional, default `"0"`) — domain separator
-
-Output:
-
-```json
-{
-  "merkleTreeDepth": 1,
-  "merkleTreeRoot": "123...",
-  "nullifier": "456...",
-  "message": "0",
-  "scope": "0",
-  "points": ["a1...", "b1...", "c1...", "d1...", "e1...", "f1...", "g1...", "h1..."]
-}
-```
-
-### Verify a proof locally
-
-```bash
+# Creates identity.json mode 0600; do not print, commit, or upload it.
+npm run anonset -- identity create identity.json
+npm run anonset -- proof generate identity.json group.json 0 <group-id> > proof.json
 npm run anonset -- verify local proof.json
+npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
 ```
 
-Output: `true` or `false`
+The identity file contains a private key. Keep it out of version control, CI
+artifacts, shell history, and support tickets. The CLI refuses overwrite unless
+`--force` is explicit. Prefer its file-producing command over passing a private
+key argument; that optional argument exists only for controlled test fixtures.
 
-This verification runs entirely off-chain using the Semaphore verification
-keys. No network access is needed.
+## Reusable checks versus claims
 
-### Verify a proof on-chain
+`verify local` and `verify on-chain` do not consume a nullifier. They are for
+reusable membership checks, not one-time authorization. For a one-use claim,
+an application must submit the generated proof to `validateMembership` and
+handle an already-consumed nullifier as a rejected replay. Never treat a
+successful reusable check as replay protection.
 
-```bash
-npm run anonset -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
-```
+## Troubleshooting
 
-Output: `true` or `false`
-
-Calls `MerkleRootRegistryZK.verifyMembership()` on the deployed contract.
-
-## Workflow example
-
-```bash
-# 1. Create two identities
-ID1=$(npm run --silent anonset -- identity create)
-ID2=$(npm run --silent anonset -- identity create)
-
-# Extract commitments
-COMMITMENT1=$(echo "$ID1" | jq -r '.commitment')
-COMMITMENT2=$(echo "$ID2" | jq -r '.commitment')
-
-# Save identity 1 for later proof generation
-echo "$ID1" > identity.json
-
-# 2. Create group JSON
-echo "{\"members\": [\"$COMMITMENT1\", \"$COMMITMENT2\"]}" > group.json
-
-# 3. Generate proof for identity 1
-PROOF=$(npm run --silent anonset -- proof generate identity.json group.json)
-
-# 4. Verify locally
-echo "$PROOF" > proof.json
-npm run --silent anonset -- verify local proof.json
-# → true
-
-# 5. Verify on-chain (after adding commitments to the contract)
-npm run --silent anonset -- verify on-chain 0xREGISTRY proof.json http://127.0.0.1:8545
-# → true
-```
-
-## Identity security
-
-The `identity.json` file contains the **private key**. Anyone with this file
-can generate proofs claiming to be that identity. Keep it secure.
-
-For production use:
-- Generate identities in a secure environment
-- Distribute private keys via encrypted channels
-- Store private keys in a secrets manager, not in plaintext files
+- A wrong RPC chain ID is rejected before the contract call; correct the
+  endpoint or expected chain ID instead of bypassing the check.
+- A local proof root must correspond to the deployed group; rebuild `group.json`
+  after approved additions or removals.
+- A replay failure after `validateMembership` is expected for an already-used
+  nullifier, not a failed reusable check.

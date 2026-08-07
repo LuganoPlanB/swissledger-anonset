@@ -3,7 +3,19 @@ FORGE := $(BIN_DIR)/swissledger-forge
 CAST := $(BIN_DIR)/swissledger-cast
 ANVIL := $(BIN_DIR)/swissledger-anvil
 
-.PHONY: setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-all test ci
+.PHONY: help setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-all test ci
+
+help:
+	@printf '%s\n' 'Swissledger AnonSet targets:' \
+	  '  make toolchain-install  install checksummed SwissLedger Foundry v1.11.0 into ./bin' \
+	  '  make toolchain-info     verify the pinned local toolchain' \
+	  '  make build              generate BuildInfo and compile Istanbul artifacts' \
+	  '  make test               run the complete local/CI quality gate' \
+	  '  make test-client        run Node client tests' \
+	  '  make test-solidity      run Forge unit/fuzz tests' \
+	  '  make test-smoke         run the local-only Anvil protocol smoke' \
+	  '  make dependency-evidence write ignored SBOM and license evidence under artifacts/' \
+	  'See README.md and docs/ for testnet, release, and production procedures.'
 
 setup:
 	./scripts/install-deps

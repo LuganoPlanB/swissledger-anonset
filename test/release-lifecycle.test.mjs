@@ -46,6 +46,7 @@ test("release workflow is SHA- and evidence-gated with publication permission on
   assert.match(workflow, /workflow_run:/);
   assert.match(workflow, /workflows: \[test\]/);
   assert.match(workflow, /head_branch == 'main'/);
+  assert.doesNotMatch(workflow, /pull_request/);
   assert.match(workflow, /git rev-parse origin\/main/);
   assert.match(workflow, /node scripts\/release-gate\.mjs/);
   assert.match(workflow, /anonset-testnet-\$EXPECTED_SHA/);

@@ -6,148 +6,101 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Swissledger AnonSet
 
-Zero-knowledge anonymous set membership using the Semaphore v4 protocol,
-deployed on the Swissledger chain (ID 110).
+Anonymous Semaphore v4 membership on SwissLedger. This repository provides a
+single Semaphore group, a Node.js proof client, a pinned Istanbul-compatible
+toolchain, local protocol smoke coverage, and a protected fresh-testnet CI
+workflow. It does **not** designate a canonical production deployment.
 
-Prove you belong to an on-chain group without revealing your identity — the
-contract verifies a succinct Groth16 ZK proof while learning nothing about
-your leaf, your path, or your position. No nullifier tracking.
+## Start here
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Off-chain                             │
-│  Identity (secret) ──► @semaphore/proof ──► Groth16 proof│
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼ (proof + public inputs)
-┌─────────────────────────────────────────────────────────┐
-│                       On-chain                            │
-│  MerkleRootRegistryZK ──► Semaphore.verifyProof()        │
-│                           └── Groth16 pairing check       │
-│                           └── Merkle root matches group   │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Performance
-
-| Operation | Time | Where |
-|---|---|---|
-| `Identity.create()` | **22 ms** | off-chain |
-| `Identity.create(key)` | **21 ms** | off-chain |
-| `Group(2 members)` | **0.6 ms** | off-chain |
-| `Group(10 members)` | **1.2 ms** | off-chain |
-| `generateProof` (2 leaves) | **404 ms** | off-chain |
-| `generateProof` (10 leaves) | **190 ms** | off-chain |
-| `verifyProof` (local) | **15 ms** | off-chain |
-| `verifyMembership` (ZK proof) | 258,755 gas (~259 ms) | on-chain |
-| `addMember` | 117,292 gas (~117 ms) | on-chain |
-| `addMembers` (2 leaves) | 217,740 gas (~218 ms) | on-chain |
-| `activeRoot` / `memberCount` | ~3,000 gas (~3 ms) | on-chain |
-
-### Deployment costs
-
-| Contract | Gas | Size |
-|---|---|---|
-| `PoseidonT3` | 3,375,785 | 16.9 KB |
-| `SemaphoreVerifier` | 3,720,276 | 30.4 KB |
-| `Semaphore` | 1,827,134 | 8.3 KB |
-| `MerkleRootRegistryZK` | 1,243,236 | 5.4 KB |
-| **Total** | **10,166,431** | |
-
-On-chain times are estimated at ~1M gas/second execution.
-
-## Architecture
-
-| Layer | Technology |
-|---|---|
-| ZK circuits | Semaphore v4 (Poseidon hash, Groth16) |
-| On-chain Merkle tree | LeanIMT (via SemaphoreGroups) |
-| Contract | `MerkleRootRegistryZK.sol` |
-| Proof generation | `@semaphore-protocol/proof` (off-chain, JS) |
-| Proof verification | `SemaphoreVerifier.sol` (on-chain pairing check) |
-| Client | Node.js ESM CLI (`anonset-cli.mjs`) |
-
-## Quick start
+Prerequisites are Node.js 24, npm, `curl`, and `sha256sum` (or `shasum`). The
+installer downloads only checksummed SwissLedger Foundry v1.11.0 binaries into
+this checkout's ignored `bin/` directory; it does not install stock Foundry or
+modify a shell profile.
 
 ```bash
-make setup    # install npm dependencies + generate keys
-make build    # regenerate BuildInfo.sol + compile (swissledger-forge)
-make test     # sole local/CI quality gate: generated drift, format, audit, build, tests, analyzer, coverage, smoke
+make toolchain-install
+npm ci
+make toolchain-info
+make test
 ```
 
-## Contract API
+`make test` is the complete local quality gate: generated-file drift,
+formatting, production dependency policy, deterministic Istanbul artifacts,
+unit/fuzz/client tests, static analysis, coverage, and an isolated local Anvil
+protocol smoke. Run `make help` for focused targets. The build is pinned to
+Solc 0.8.30 and `evm_version = "istanbul"`; do not substitute stock Foundry
+or London-era settings.
 
-```solidity
-// Permissioned group management
-function addMember(uint256 identityCommitment) external returns (uint256 root);
-function addMembers(uint256[] identityCommitments) external returns (uint256 root);
-function removeMember(uint256 identityCommitment, uint256[] proof) external returns (uint256 root);
+## Proof semantics and administration
 
-// Anonymous membership verification (no nullifier tracking — unlimited proofs)
-function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256[8] points) external returns (bool);
-function verifyMembership(uint256 depth, uint256 root, uint256 nullifier, uint256 msg, uint256[8] points) external returns (bool);
+`verifyMembership` is a reusable membership check. It verifies a Semaphore
+proof but deliberately does not consume the nullifier, so the same valid proof
+can be checked repeatedly. Use it only where replay is acceptable.
 
-// Queries
-function activeRoot() external view returns (uint256);
-function memberCount() external view returns (uint256);
-function version() external pure returns (string memory);
-```
+`validateMembership` is the separate replay-protected claim path. It delegates
+to Semaphore's nullifier validation and rejects a repeated nullifier for the
+group scope. A caller-supplied message remains part of the proof; use an
+application-specific message and scope when defining a claim protocol. These
+events are intentionally distinct: `MembershipVerified` means reusable check;
+`MembershipValidated` means one-use validation.
 
-## Client CLI
+The registry has a two-step owner transfer (`transferOwnership`, then
+`acceptOwnership`). The accepted owner becomes a member manager; explicitly
+added managers are retained. See [operations](docs/OPERATIONS.md) before any
+administrative action.
+
+## Chains and deployment evidence
+
+| Network | Chain ID | Purpose |
+|---|---:|---|
+| SwissLedger testnet | `222` | Protected CI deploys a new three-contract stack for each trusted run. |
+| SwissLedger production | `110` | Manual governance-gated promotion only; no workflow deploys it. |
+
+The test workflow runs local gates for pull requests, `main` pushes, and manual
+runs. Its secret-bearing testnet job runs only after local gates on a protected
+`main` push/workflow dispatch, or on a same-repository PR whose base is `main`.
+The latter requires explicit `swissledger-testnet` GitHub Environment approval;
+fork PRs remain secret-free and cannot start the testnet job. It requires
+`SWISSLEDGER_TESTNET_ADDRESS` (credential-free RPC URL) and
+`SWISSLEDGER_TESTNET_DEPLOY` (deployer key). Never put either value in files,
+command lines, artifacts, issue text, or logs. PR validation creates fresh
+testnet evidence only; it never starts a release.
+
+Each successful trusted run uploads `anonset-testnet-<commit>` for 90 days. It
+contains a secret-scanned manifest, contract ABI/bytecode hashes, deployment
+and smoke receipts, and dependency evidence. Testnet addresses prove that
+specific fresh CI run only; they are not canonical production addresses.
+Release runs download and validate this exact-commit evidence before publishing
+GitHub-only semantic-release output. Package publication is disabled.
+
+For the manual chain-110 checklist, address/code verification, and the
+mandatory production governance gates, see [deployment](docs/DEPLOYMENT.md).
+The current handoff status and explicit external blockers are in
+[readiness evidence](docs/READINESS.md).
+
+## Client
 
 ```bash
-# Create an identity
-npm run anonset -- identity create
-
-# Generate a ZK proof
-npm run anonset -- proof generate identity.json group.json
-
-# Verify locally (no chain needed)
+npm run anonset -- identity create identity.json
+npm run anonset -- proof generate identity.json group.json 0 <group-id>
 npm run anonset -- verify local proof.json
-
-# Verify on-chain
-npm run anonset -- verify on-chain 0xCONTRACT proof.json https://rpc.example.com
+npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
 ```
 
-See [clients/anonset/README.md](clients/anonset/README.md) for the full workflow.
+See [clients/anonset/README.md](clients/anonset/README.md) for exact argument
+rules, safe identity handling, and local/on-chain verification.
 
-## Deployment
+## Versioning and release
 
-```bash
-# Local
-swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol --rpc-url anvil --broadcast
+The package is private. Conventional commits drive GitHub-only semantic-release
+tags and release notes. `BuildInfo.sol` embeds the package version and the
+release workflow refuses a release unless rebuilt artifacts match the fresh
+chain-222 evidence for the exact `main` commit. A release is not a production
+deployment authorization.
 
-# Production (Swissledger chain ID 110)
-swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol \
-  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --legacy --gas-price 0
-```
+## Licensing
 
-The deploy script deploys the full stack: `SemaphoreVerifier` → `Semaphore` → `MerkleRootRegistryZK`.
-
-## Chain compatibility
-
-Built exclusively with **swissledger-foundry** (`evm_version = "istanbul"`).
-Always use `--legacy` and `--gas-price 0` for on-chain transactions.
-
-## Versioning
-
-`semantic-release` computes the next SemVer version from conventional commits.
-The build embeds it via `BuildInfo.sol` → `MerkleRootRegistryZK.version()`.
-
-# Licensing
-
-Swissledger AnonSet is Copyright (C) 2026 PlanB Foundation
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public
-License along with this program.  If not, see
-<https://www.gnu.org/licenses/>.
+Swissledger AnonSet is Copyright (C) 2026 PlanB Foundation and is licensed
+under the GNU Affero General Public License, version 3 or later, without
+warranty.

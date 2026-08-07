@@ -10,7 +10,7 @@ const workflow = readFileSync(join(root, ".github/workflows/test.yml"), "utf8");
 const deploy = join(root, "scripts/testnet-deploy");
 const evidence = readFileSync(join(root, "scripts/testnet-evidence.mjs"), "utf8");
 
-test("workflow isolates untrusted local gates from the protected testnet job", () => {
+test("workflow permits Environment-approved same-repository PR testnet validation but excludes forks", () => {
     assert.match(workflow, /pull_request:/);
     assert.match(workflow, /workflow_dispatch:/);
     assert.match(workflow, /needs: local-gates/);
@@ -21,10 +21,16 @@ test("workflow isolates untrusted local gates from the protected testnet job", (
     assert.match(workflow, /scripts\/rpc-proxy\.py --target "\$SWISSLEDGER_TESTNET_ADDRESS"/);
     assert.match(workflow, /github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/);
     assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
-    const permitsTestnet = (event, ref) => ["push", "workflow_dispatch"].includes(event) && ref === "refs/heads/main";
-    assert.equal(permitsTestnet("pull_request", "refs/pull/1/merge"), false);
-    assert.equal(permitsTestnet("workflow_dispatch", "refs/heads/feature/untrusted"), false);
-    assert.equal(permitsTestnet("workflow_dispatch", "refs/heads/main"), true);
+    assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+    assert.match(workflow, /github\.event\.pull_request\.base\.ref == 'main'/);
+    const permitsTestnet = ({ event, ref, headRepository, repository, base }) =>
+        (["push", "workflow_dispatch"].includes(event) && ref === "refs/heads/main") ||
+        (event === "pull_request" && headRepository === repository && base === "main");
+    assert.equal(permitsTestnet({ event: "pull_request", ref: "refs/pull/1/merge", headRepository: "owner/repo", repository: "owner/repo", base: "main" }), true);
+    assert.equal(permitsTestnet({ event: "pull_request", ref: "refs/pull/1/merge", headRepository: "fork/repo", repository: "owner/repo", base: "main" }), false);
+    assert.equal(permitsTestnet({ event: "pull_request", ref: "refs/pull/1/merge", headRepository: "owner/repo", repository: "owner/repo", base: "release" }), false);
+    assert.equal(permitsTestnet({ event: "workflow_dispatch", ref: "refs/heads/feature/untrusted" }), false);
+    assert.equal(permitsTestnet({ event: "workflow_dispatch", ref: "refs/heads/main" }), true);
     assert.doesNotMatch(workflow, /@[vV]\d+(?:\.|\s|$)/);
     assert.match(workflow, /make dependency-evidence/);
 });

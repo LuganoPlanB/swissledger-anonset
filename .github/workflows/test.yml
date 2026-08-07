@@ -32,11 +32,15 @@ jobs:
   testnet:
     name: fresh testnet deployment and ZK smoke
     needs: local-gates
-    # Secrets and the protected environment are reachable only from protected
-    # main code or a repository-dispatched run, never from a pull request.
+    # Fork PRs never receive the Environment. Same-repository PRs targeting
+    # main may be approved by the protected Environment for fresh testnet
+    # validation, but remain ineligible for the main-only release workflow.
     if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      github.ref == 'refs/heads/main'
+      ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     environment: swissledger-testnet
