@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Identity } from "@semaphore-protocol/identity";
 import { Group } from "@semaphore-protocol/group";
-import { generateProof, verifyProof } from "@semaphore-protocol/proof";
+import { generateProof, verifyProof } from "./proof-runtime.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(__dirname, "anonset-cli.mjs");
@@ -142,6 +142,18 @@ describe("anonset CLI — proof generation", () => {
         assert.throws(
             () => runCli("proof generate"),
             /requires/
+        );
+    });
+
+    it("releases proof worker resources", async () => {
+        const identity = new Identity();
+        const group = new Group([identity.commitment]);
+        const proof = await generateProof(identity, group, "0", "0");
+
+        assert.equal(await verifyProof(proof), true);
+        assert.equal(
+            process.getActiveResourcesInfo().filter((resource) => resource === "MessagePort").length,
+            0,
         );
     });
 });

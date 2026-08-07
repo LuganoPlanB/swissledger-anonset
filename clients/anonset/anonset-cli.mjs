@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Identity } from "@semaphore-protocol/identity";
 import { Group } from "@semaphore-protocol/group";
-import { generateProof, verifyProof } from "@semaphore-protocol/proof";
+import { generateProof, verifyProof } from "./proof-runtime.mjs";
 import { Contract, JsonRpcProvider } from "ethers";
 
 // ---------------------------------------------------------------------------
@@ -14,8 +14,9 @@ function writeStdout(value) {
 }
 
 function fail(message, exitCode = 2) {
-    process.stderr.write(`${message}\n`);
-    process.exit(exitCode);
+    const error = new Error(message);
+    error.exitCode = exitCode;
+    throw error;
 }
 
 function parseJson(text, label) {
@@ -197,9 +198,8 @@ async function run() {
 
 try {
     await run();
-    process.exit(0);
 } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
-    process.exit(1);
+    process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;
 }

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Download only the reviewed SwissLedger Foundry release into this checkout.
+set -Eeuo pipefail
+
+readonly RELEASE="v1.11.0"
+readonly RELEASE_URL="https://github.com/LuganoPlanB/swissledger-foundry/releases/download/${RELEASE}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+readonly PROJECT_DIR
+readonly BIN_DIR="${SWISSLEDGER_BIN_DIR:-$PROJECT_DIR/bin}"
+
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+require() { command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"; }
+
+platform="${SWISSLEDGER_PLATFORM:-$(uname -s)-$(uname -m)}"
+case "$platform" in
+    Linux-x86_64) platform="linux-x86_64" ;;
+    Darwin-arm64) platform="darwin-arm64" ;;
+    *) fail "unsupported platform: $platform (supported: Linux-x86_64, Darwin-arm64)" ;;
+esac
+
+case "$platform" in
+    linux-x86_64)
+        forge_sha="e919d1f4973b037a1486c4f60675c431f93bb21475f57b5d7b4c8bf0b806534a"
+        cast_sha="f7010d732a2950da7e893098e8fc4651a935755602256c29222b79a9098a4cb2"
+        anvil_sha="03ca9cb21ad73ba56a836a8b402ad8281dba125aacdb4f58875eb1c46e4ac5be"
+        ;;
+    darwin-arm64)
+        forge_sha="a1ceb7e17f4fb6542d852bc36ef4b5ba176929c08fb89fa91efcdecc5f7ee6ad"
+        cast_sha="ada22d32d352c47134a1a362df0889cc70b1fd0b516c071f974b82a7bcc04e05"
+        anvil_sha="570715b582fce84b0f0e4e3b8e24d596ff2a933ae133d6cd084e0e5c2037c407"
+        ;;
+esac
+
+require curl
+if command -v sha256sum >/dev/null 2>&1; then
+    checksum() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+    checksum() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+    fail "required command not found: sha256sum or shasum"
+fi
+mkdir -p "$BIN_DIR"
+
+install_binary() {
+    local binary="$1" expected_sha="$2" temporary actual_sha
+    temporary="$(mktemp "$BIN_DIR/.${binary}.XXXXXX")"
+    if ! curl --fail --location --silent --show-error --retry 3 --proto '=https' --tlsv1.2 \
+        "$RELEASE_URL/${binary}_${platform}" --output "$temporary"; then
+        rm -f -- "$temporary"
+        fail "download failed for $binary"
+    fi
+    actual_sha="$(checksum "$temporary")"
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+        rm -f -- "$temporary"
+        fail "checksum mismatch for $binary (expected $expected_sha, got $actual_sha)"
+    fi
+    chmod 0755 "$temporary"
+    mv -f "$temporary" "$BIN_DIR/$binary"
+}
+
+install_binary swissledger-forge "$forge_sha"
+install_binary swissledger-cast "$cast_sha"
+install_binary swissledger-anvil "$anvil_sha"
+printf 'Installed SwissLedger Foundry %s in %s\n' "$RELEASE" "$BIN_DIR"

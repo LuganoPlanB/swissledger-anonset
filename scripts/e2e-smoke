@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # End-to-end smoke test using a local Anvil node.
 #
@@ -14,6 +14,13 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+FORGE="$PROJECT_DIR/bin/swissledger-forge"
+CAST="$PROJECT_DIR/bin/swissledger-cast"
+ANVIL="$PROJECT_DIR/bin/swissledger-anvil"
+for binary in "$FORGE" "$CAST" "$ANVIL"; do
+    [[ -x "$binary" ]] || { printf 'error: missing pinned tool %s; run make toolchain-install\n' "$binary" >&2; exit 1; }
+done
+
 ANVIL_PID=""
 cleanup() {
     if [ -n "$ANVIL_PID" ]; then
@@ -23,12 +30,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Starting Anvil..."
-anvil --port 8545 &
+"$ANVIL" --port 8545 &
 ANVIL_PID=$!
 sleep 2
 
 echo "==> Deploying contracts..."
-DEPLOY_OUTPUT=$(forge script script/DeployMerkleRootRegistryZK.s.sol \
+DEPLOY_OUTPUT=$("$FORGE" script script/DeployMerkleRootRegistryZK.s.sol \
     --rpc-url http://127.0.0.1:8545 \
     --broadcast \
     --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
@@ -40,17 +47,17 @@ echo "==> Registry deployed at: $REGISTRY_ADDR"
 echo "==> Adding test members..."
 # Add a known commitment
 COMMITMENT="11005642493773047649202648265396872197147567800455247120861783398111750817516"
-cast send "$REGISTRY_ADDR" "addMember(uint256)" "$COMMITMENT" \
+"$CAST" send "$REGISTRY_ADDR" "addMember(uint256)" "$COMMITMENT" \
     --rpc-url http://127.0.0.1:8545 \
     --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
     --gas-limit 200000
 
 echo "==> Checking member count..."
-COUNT=$(cast call "$REGISTRY_ADDR" "memberCount()(uint256)" --rpc-url http://127.0.0.1:8545)
+COUNT=$("$CAST" call "$REGISTRY_ADDR" "memberCount()(uint256)" --rpc-url http://127.0.0.1:8545)
 echo "==> Members: $COUNT"
 
 echo "==> Checking active root..."
-ROOT=$(cast call "$REGISTRY_ADDR" "activeRoot()(uint256)" --rpc-url http://127.0.0.1:8545)
+ROOT=$("$CAST" call "$REGISTRY_ADDR" "activeRoot()(uint256)" --rpc-url http://127.0.0.1:8545)
 echo "==> Active root: $ROOT"
 
 echo "==> Smoke test passed."

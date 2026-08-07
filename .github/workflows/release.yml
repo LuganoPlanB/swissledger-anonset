@@ -17,12 +17,12 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
-      - uses: foundry-rs/foundry-toolchain@v1
-        with: { version: stable }
+      - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
+      - run: make dependency-integrity
       - run: node scripts/generate-build-info.mjs
-      - run: forge build --evm-version london
-      - run: forge test -vvv
+      - run: bin/swissledger-forge build
+      - run: bin/swissledger-forge test -vvv
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
