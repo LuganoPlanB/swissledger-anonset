@@ -5,6 +5,7 @@ script = "script"
 out = "out"
 libs = ["node_modules"]
 allow_paths = ["*"]
+fs_permissions = [{ access = "read-write", path = "./out" }]
 remappings = [
     "@semaphore/contracts/=node_modules/@semaphore-protocol/contracts/",
     "@zk-kit/lean-imt.sol=node_modules/@zk-kit/lean-imt.sol",

@@ -34,10 +34,6 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@semaphore-protocol/contracts": "4.14.3",
-    "@zk-kit/lean-imt.sol": "^2.0.1",
-    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
-    "poseidon-solidity": "^0.0.5",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/exec": "^7.1.0",
@@ -45,6 +41,11 @@
     "@semantic-release/github": "^11.0.6",
     "@semantic-release/npm": "^12.0.2",
     "@semantic-release/release-notes-generator": "^14.1.0",
-    "semantic-release": "^25.0.5"
+    "@semaphore-protocol/contracts": "4.14.3",
+    "@zk-kit/lean-imt.sol": "^2.0.1",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "poseidon-solidity": "^0.0.5",
+    "semantic-release": "^25.0.5",
+    "solhint": "5.0.5"
   }
 }

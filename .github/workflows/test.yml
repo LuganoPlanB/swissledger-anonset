@@ -16,16 +16,8 @@ jobs:
       # install explicit v1.11.0 assets with repository-pinned checksums.
       - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
-      - run: make dependency-integrity
-      - name: Forge build + test
-        run: |
-          bin/swissledger-forge clean
-          node scripts/generate-build-info.mjs
-          make artifact-compatibility
-          make reproducible-build
-          bin/swissledger-forge test -vvv
-      - name: Node client tests
-        run: npm test
+      - name: Complete local quality gate
+        run: make test
 
   smoke:
     needs: unit

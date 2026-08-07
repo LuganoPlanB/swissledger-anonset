@@ -7,8 +7,6 @@ import { SemaphoreVerifier } from "@semaphore/contracts/base/SemaphoreVerifier.s
 import { ISemaphoreVerifier } from "@semaphore/contracts/interfaces/ISemaphoreVerifier.sol";
 import { Script } from "forge-std/Script.sol";
 
-bytes32 constant SALT = bytes32(0);
-
 /// @notice Deploys the full Semaphore stack + MerkleRootRegistryZK.
 ///
 /// Usage:
@@ -31,19 +29,35 @@ contract DeployMerkleRootRegistryZK is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy Groth16 verifier for Semaphore circuits
-        SemaphoreVerifier semaphoreVerifierContract = new SemaphoreVerifier{ salt: SALT }();
+        SemaphoreVerifier semaphoreVerifierContract = new SemaphoreVerifier();
         semaphoreVerifierAddr = address(semaphoreVerifierContract);
 
         // 2. Deploy Semaphore (on-chain group + Merkle tree + proof router)
-        Semaphore semaphoreContract =
-            new Semaphore{ salt: SALT }(ISemaphoreVerifier(semaphoreVerifierAddr));
+        Semaphore semaphoreContract = new Semaphore(ISemaphoreVerifier(semaphoreVerifierAddr));
         semaphoreAddr = address(semaphoreContract);
 
         // 3. Deploy MerkleRootRegistryZK (creates its own group inside Semaphore)
-        MerkleRootRegistryZK registryContract =
-            new MerkleRootRegistryZK{ salt: SALT }(semaphoreAddr);
+        MerkleRootRegistryZK registryContract = new MerkleRootRegistryZK(semaphoreAddr);
         registryAddr = address(registryContract);
 
         vm.stopBroadcast();
+
+        string memory manifestPath = vm.envOr("DEPLOY_MANIFEST", string(""));
+        if (bytes(manifestPath).length != 0) {
+            vm.writeFile(
+                manifestPath,
+                string.concat(
+                    "{\"chainId\":",
+                    vm.toString(block.chainid),
+                    ",\"registry\":\"",
+                    vm.toString(registryAddr),
+                    "\",\"semaphore\":\"",
+                    vm.toString(semaphoreAddr),
+                    "\",\"semaphoreVerifier\":\"",
+                    vm.toString(semaphoreVerifierAddr),
+                    "\"}"
+                )
+            );
+        }
     }
 }

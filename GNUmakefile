@@ -3,7 +3,7 @@ FORGE := $(BIN_DIR)/swissledger-forge
 CAST := $(BIN_DIR)/swissledger-cast
 ANVIL := $(BIN_DIR)/swissledger-anvil
 
-.PHONY: setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence test-build test-solidity test-client test-smoke test-all test
+.PHONY: setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-all test ci
 
 setup:
 	./scripts/install-deps
@@ -50,6 +50,15 @@ dependency-evidence: dependency-integrity
 	npm sbom --omit=dev --sbom-format=cyclonedx > artifacts/dependencies.cdx.json
 	npm run licenses -- --output artifacts/dependency-licenses.json
 
+format: assert-toolchain
+	$(FORGE) fmt --check
+
+solidity-analysis:
+	npx --no-install solhint 'src/**/*.sol'
+
+coverage: assert-toolchain generate-build-info
+	@report=$$(mktemp); trap 'rm -f "$$report"' EXIT; $(FORGE) coverage --report summary >"$$report"; cat "$$report"; node scripts/check-coverage.mjs "$$report"
+
 test-solidity: assert-toolchain generate-build-info
 	$(FORGE) test -vvv
 
@@ -59,11 +68,16 @@ test-client:
 test-build:
 	node --test test/*.test.mjs
 	./test/toolchain-installer.test.sh
-	shellcheck scripts/build-solc scripts/e2e-smoke scripts/install-deps scripts/install-swissledger-toolchain scripts/keygen test/toolchain-installer.test.sh
+	shellcheck scripts/build-solc scripts/e2e-smoke scripts/install-deps scripts/install-swissledger-toolchain scripts/keygen test/e2e-smoke.test.sh test/toolchain-installer.test.sh
 
 test-smoke: assert-toolchain generate-build-info
 	./scripts/e2e-smoke
 
-test-all: dependency-integrity build test-build test-client test-solidity test-smoke
+test-smoke-isolation: assert-toolchain generate-build-info
+	./test/e2e-smoke.test.sh
+
+test-all: check-build-info format dependency-integrity build artifact-compatibility reproducible-build test-build test-client test-solidity solidity-analysis coverage test-smoke test-smoke-isolation
 
 test: test-all
+
+ci: test

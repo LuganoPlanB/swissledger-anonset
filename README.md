@@ -72,7 +72,7 @@ On-chain times are estimated at ~1M gas/second execution.
 ```bash
 make setup    # install npm dependencies + generate keys
 make build    # regenerate BuildInfo.sol + compile (swissledger-forge)
-make test     # full suite: client + solidity + smoke
+make test     # sole local/CI quality gate: generated drift, format, audit, build, tests, analyzer, coverage, smoke
 ```
 
 ## Contract API

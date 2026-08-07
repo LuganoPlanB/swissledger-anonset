@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const phaseArgument = process.argv.find((argument) => argument.startsWith("--phase="));
 const selectedPhase = phaseArgument?.slice("--phase=".length) ?? "all";
@@ -13,12 +14,13 @@ const phases = [
     {
         id: "unit",
         label: "client unit",
-        pattern: "identity|help|rejects non-membership|rejects missing arguments",
+        pattern: "client hardening",
     },
     {
         id: "proof",
         label: "proof integration",
-        pattern: "generates a valid|custom message|releases proof|verifies a valid|returns false",
+        pattern: "proof integration:",
+        requiredTests: 4,
     },
 ].filter(({ id }) => selectedPhase === "all" || selectedPhase === id);
 
@@ -27,6 +29,11 @@ if (phases.length === 0) {
 }
 
 async function runPhase({ label, pattern }) {
+    const source = readFileSync("clients/anonset/anonset.test.mjs", "utf8");
+    const matchedTests = (source.match(/it\("proof integration:/g) ?? []).length;
+    if (pattern === "proof integration:" && matchedTests < 4) {
+        throw new Error(`Node test phase '${label}' requires at least 4 executable proof integration tests; found ${matchedTests}`);
+    }
     const remainingSuiteTime = suiteDeadline - Date.now();
     const timeoutMilliseconds = Math.min(configuredPhaseTimeout, remainingSuiteTime);
     if (timeoutMilliseconds <= 0) {
