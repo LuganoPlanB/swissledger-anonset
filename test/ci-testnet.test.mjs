@@ -80,7 +80,7 @@ test("testnet deployment writes a secret-free three-contract manifest against a 
         assert.equal(manifest.chainId, 222);
         assert.equal(manifest.operationalGasCeiling, 20000000);
         assert.equal(manifest.deployments.length, 3);
-        assert.deepEqual(manifest.deployments.map(({ gasLimit }) => gasLimit), ["1000000", "5000000", "5000000"]);
+        assert.deepEqual(manifest.deployments.map(({ gasLimit }) => gasLimit), ["5000000", "5000000", "5000000"]);
         assert.equal(JSON.stringify(manifest).includes(privateKey), false);
         const mismatch = spawnSync(deploy, [out], { cwd: root, env: { ...deploymentEnvironment, SWISSLEDGER_TESTNET_ADDRESS: "0x00000000000000000000000000000000000000ab" }, encoding: "utf8" });
         assert.notEqual(mismatch.status, 0);
@@ -92,7 +92,7 @@ test("testnet deployment writes a secret-free three-contract manifest against a 
             [{ MOCK_CODE: "0x" }, /empty runtime code/],
             [{ MOCK_RECEIPT: '{"status":"0x1","gasUsed":"0xb71b00"}' }, /gas cap/],
             [{ MOCK_FORGE_JSON: "not-json" }, /returned no deployment address/],
-            [{ MOCK_FORGE_EXIT: "17" }, /returned no deployment address/],
+            [{ MOCK_FORGE_EXIT: "17" }, /deployment command failed/],
         ]) {
             const result = spawnSync(deploy, [out], { cwd: root, env: { ...deploymentEnvironment, ...mock }, encoding: "utf8" });
             assert.notEqual(result.status, 0);

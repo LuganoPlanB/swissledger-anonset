@@ -14,7 +14,7 @@ PRIVATE_KEY=${SWISSLEDGER_TESTNET_DEPLOY:-}
 # These are local operational ceilings (measured use plus generous margin),
 # not a claim about a remote testnet block-gas limit.
 OPERATIONAL_MAX_GAS_LIMIT=20000000
-VERIFIER_GAS_LIMIT=${SWISSLEDGER_TESTNET_VERIFIER_GAS_LIMIT:-1000000}
+VERIFIER_GAS_LIMIT=${SWISSLEDGER_TESTNET_VERIFIER_GAS_LIMIT:-5000000}
 SEMAPHORE_GAS_LIMIT=${SWISSLEDGER_TESTNET_SEMAPHORE_GAS_LIMIT:-5000000}
 REGISTRY_GAS_LIMIT=${SWISSLEDGER_TESTNET_REGISTRY_GAS_LIMIT:-5000000}
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/anonset-testnet.XXXXXX")"
@@ -50,7 +50,9 @@ deploy() {
     result="$TMP_DIR/$name.json"
     local -a command=("$FORGE" create "$contract" --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --legacy --gas-price 0 --gas-limit "$gas_limit" --chain "$CHAIN_ID" --broadcast --json)
     (( $# == 0 )) || command+=(--constructor-args "$@")
-    "${command[@]}" >"$result"
+    if ! "${command[@]}" >"$result"; then
+        die "$name deployment command failed"
+    fi
     address="$(node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1])); if(!/^0x[0-9a-f]{40}$/i.test(v.deployedTo||""))process.exit(1); process.stdout.write(v.deployedTo)' "$result")" || die "$name returned no deployment address"
     tx="$(node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1])); const x=v.transactionHash||v.transaction?.hash||""; if(!/^0x[0-9a-f]{64}$/i.test(x))process.exit(1); process.stdout.write(x)' "$result")" || die "$name returned no transaction hash"
     receipt="$($CAST receipt --json "$tx" --rpc-url "$RPC_URL")"
