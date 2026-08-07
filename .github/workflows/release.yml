@@ -49,7 +49,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: gh run download "$RUN_ID" --name "anonset-testnet-$EXPECTED_SHA" --dir testnet-evidence
-      - uses: actions/setup-node@1e60f620b9541d4e35e7080e59e86e5b3fcae5a4 # v4.0.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24, cache: npm }
       - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
