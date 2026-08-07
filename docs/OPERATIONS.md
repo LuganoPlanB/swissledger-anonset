@@ -26,17 +26,20 @@ key, identity JSON, mnemonic, GitHub token, raw secret value, or authenticated
 URL; never upload any of them as an artifact.
 
 Rotate/revoke a testnet deployer by creating a replacement Environment secret,
-funding and registering the new testnet address, running a protected fresh
-chain-222 workflow, then deleting the old secret and disabling/revoking its
-network access. Preserve only public old-address, transaction, workflow, and
-revocation timestamps. A production signer follows the approved multisig/key
-custody procedure; a testnet key is never promoted to production.
+authorizing the new testnet address under the network access policy, running a
+protected fresh chain-222 workflow, then deleting the old secret and
+disabling/revoking its network access. Preserve only public old-address,
+transaction, workflow, and revocation timestamps. A production signer follows
+the approved multisig/key custody procedure; a testnet key is never promoted to
+production.
 
 Before a testnet run, the workflow itself checks chain `222`, credential-free
-RPC syntax, deployer address, nonzero registered balance, and explicit gas
-limits. Before any manually authorized production action, independently verify
-chain `110`, signer identity, approved release hashes, address book, and
-multisig threshold. Stop on a mismatch.
+RPC syntax, deployer address, and explicit gas limits. Successful signed
+deployment receipts establish network authorization; native-token balance is
+not a prerequisite on this permissioned zero-gas chain. Before any manually
+authorized production action, independently verify chain `110`, signer
+identity, approved release hashes, address book, and multisig threshold. Stop
+on a mismatch.
 
 ## Deployment, upgrade, and recovery rules
 

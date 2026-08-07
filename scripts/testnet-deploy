@@ -41,8 +41,6 @@ for binary in "$FORGE" "$CAST" node; do command -v "$binary" >/dev/null 2>&1 || 
 DEPLOYER="$($CAST wallet address --private-key "$PRIVATE_KEY")"
 [[ $DEPLOYER =~ ^0x[0-9a-fA-F]{40}$ ]] || die 'could not derive deployer address'
 [[ ${DEPLOYER,,} == "${EXPECTED_DEPLOYER,,}" ]] || die 'derived deployer does not match SWISSLEDGER_TESTNET_ADDRESS'
-BALANCE="$($CAST balance "$DEPLOYER" --rpc-url "$RPC_URL")"
-[[ ${BALANCE%% *} != 0 ]] || die 'deployer has no registered testnet balance'
 mkdir -p "$(dirname "$OUTPUT")"
 "$FORGE" build >/dev/null
 

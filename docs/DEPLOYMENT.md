@@ -37,12 +37,14 @@ main-only. The Environment uses:
   key made available only through the protected Environment.
 
 It rejects every chain other than `222`, derives the deployer from the secret
-and checks it equals the public address variable, validates a nonzero registered
-balance, serializes deployment by deployer/network, and
+and checks it equals the public address variable, serializes deployment by
+deployer/network, and
 deploys `SemaphoreVerifier → Semaphore → MerkleRootRegistryZK` with explicit
 legacy, zero-gas-price limits. `scripts/rpc-proxy.py --target <testnet-rpc>` is
 used in CI only for the documented mandatory-`params` RPC quirk. Do not export
 secrets or run these scripts in a shell whose history/logging will retain them.
+The successful signed deployment receipts establish permissioned-network
+authorization; a zero native-token balance is valid on this zero-gas chain.
 
 The subsequent smoke adds two ephemeral commitments, checks root/count/wiring,
 uses `verifyMembership` twice, uses `validateMembership` once, and confirms a
