@@ -8,7 +8,8 @@ FORGE="${FORGE_BIN:-$PROJECT_DIR/bin/swissledger-forge}"
 CAST="${CAST_BIN:-$PROJECT_DIR/bin/swissledger-cast}"
 OUTPUT=${1:?usage: testnet-deploy OUTPUT_JSON}
 CHAIN_ID=${SWISSLEDGER_TESTNET_CHAIN_ID:-222}
-RPC_URL=${SWISSLEDGER_TESTNET_ADDRESS:-}
+RPC_URL=${SWISSLEDGER_TESTNET_RPC:-}
+EXPECTED_DEPLOYER=${SWISSLEDGER_TESTNET_ADDRESS:-}
 PRIVATE_KEY=${SWISSLEDGER_TESTNET_DEPLOY:-}
 # These are local operational ceilings (measured use plus generous margin),
 # not a claim about a remote testnet block-gas limit.
@@ -22,10 +23,14 @@ die() { printf 'testnet-deploy: %s\n' "$*" >&2; exit 1; }
 cleanup() { rm -rf -- "$TMP_DIR"; }
 trap cleanup EXIT HUP INT TERM
 [[ $CHAIN_ID == 222 ]] || die 'only SwissLedger testnet chain ID 222 is permitted'
+if [[ -z $RPC_URL ]]; then
+    die 'missing SWISSLEDGER_TESTNET_RPC (organization variable with credential-free http(s) RPC URL)'
+fi
 if [[ ! $RPC_URL =~ ^https?://[^/@?#]+ ]] || [[ $RPC_URL =~ ^https?://[^/]*@ ]]; then
-    die 'SWISSLEDGER_TESTNET_ADDRESS must be a credential-free http(s) RPC URL'
+    die 'SWISSLEDGER_TESTNET_RPC must be a credential-free http(s) RPC URL'
 fi
 [[ $PRIVATE_KEY =~ ^0x[0-9a-fA-F]{64}$ ]] || die 'SWISSLEDGER_TESTNET_DEPLOY must be a 32-byte private key'
+[[ $EXPECTED_DEPLOYER =~ ^0x[0-9a-fA-F]{40}$ ]] || die 'SWISSLEDGER_TESTNET_ADDRESS must be the expected public deployer address'
 for gas_limit in "$VERIFIER_GAS_LIMIT" "$SEMAPHORE_GAS_LIMIT" "$REGISTRY_GAS_LIMIT"; do
     if [[ ! $gas_limit =~ ^[1-9][0-9]*$ ]] || (( gas_limit >= OPERATIONAL_MAX_GAS_LIMIT )); then
         die "gas limit must be a positive integer below the $OPERATIONAL_MAX_GAS_LIMIT operational ceiling"
@@ -35,6 +40,7 @@ for binary in "$FORGE" "$CAST" node; do command -v "$binary" >/dev/null 2>&1 || 
 [[ "$($CAST chain-id --rpc-url "$RPC_URL")" == "$CHAIN_ID" ]] || die "RPC chain ID is not $CHAIN_ID"
 DEPLOYER="$($CAST wallet address --private-key "$PRIVATE_KEY")"
 [[ $DEPLOYER =~ ^0x[0-9a-fA-F]{40}$ ]] || die 'could not derive deployer address'
+[[ ${DEPLOYER,,} == "${EXPECTED_DEPLOYER,,}" ]] || die 'derived deployer does not match SWISSLEDGER_TESTNET_ADDRESS'
 BALANCE="$($CAST balance "$DEPLOYER" --rpc-url "$RPC_URL")"
 [[ ${BALANCE%% *} != 0 ]] || die 'deployer has no registered testnet balance'
 mkdir -p "$(dirname "$OUTPUT")"

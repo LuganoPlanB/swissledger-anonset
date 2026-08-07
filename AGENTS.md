@@ -77,9 +77,10 @@ make artifact-compatibility
 ### Testnet deployment
 
 Only `.github/workflows/test.yml` starts a fresh chain-222 deployment. It uses
-the protected `swissledger-testnet` Environment and its two named secrets after
-an approved same-repository PR to `main`, or on protected `main`; fork PRs stay
-secret-free. PR validation never triggers release automation. It uses legacy
+the protected `swissledger-testnet` Environment, organization RPC/address
+variables, and the deployer organization secret after an approved
+same-repository PR to `main`, or on protected `main`; fork PRs stay secret-free.
+PR validation never triggers release automation. It uses legacy
 zero-price transactions and `scripts/rpc-proxy.py` solely to normalize the
 known mandatory-`params` RPC behavior. The proxy accepts an explicit target;
 it is not a production deploy tool. Read `docs/DEPLOYMENT.md` for evidence

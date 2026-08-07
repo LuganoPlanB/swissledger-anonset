@@ -29,12 +29,16 @@ local gates, then can use the `swissledger-testnet` Environment on a protected
 fresh chain-222 validation evidence only; the release workflow remains
 main-only. The Environment uses:
 
-- `SWISSLEDGER_TESTNET_ADDRESS`: a credential-free HTTP(S) testnet RPC URL;
-- `SWISSLEDGER_TESTNET_DEPLOY`: a 32-byte deployer private key held only by
-  GitHub Environment secrets.
+- organization variable `SWISSLEDGER_TESTNET_RPC`: a credential-free HTTP(S)
+  testnet RPC URL;
+- organization variable `SWISSLEDGER_TESTNET_ADDRESS`: expected public deployer
+  address `0x90640C652c7F5d90f0Fb9E729Fe4400c52d4C67a`;
+- organization secret `SWISSLEDGER_TESTNET_DEPLOY`: a 32-byte deployer private
+  key made available only through the protected Environment.
 
-It rejects every chain other than `222`, validates the deployer address and a
-nonzero registered balance, serializes deployment by deployer/network, and
+It rejects every chain other than `222`, derives the deployer from the secret
+and checks it equals the public address variable, validates a nonzero registered
+balance, serializes deployment by deployer/network, and
 deploys `SemaphoreVerifier → Semaphore → MerkleRootRegistryZK` with explicit
 legacy, zero-gas-price limits. `scripts/rpc-proxy.py --target <testnet-rpc>` is
 used in CI only for the documented mandatory-`params` RPC quirk. Do not export

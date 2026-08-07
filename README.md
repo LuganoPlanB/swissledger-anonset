@@ -61,10 +61,12 @@ The test workflow runs local gates for pull requests, `main` pushes, and manual
 runs. Its secret-bearing testnet job runs only after local gates on a protected
 `main` push/workflow dispatch, or on a same-repository PR whose base is `main`.
 The latter requires explicit `swissledger-testnet` GitHub Environment approval;
-fork PRs remain secret-free and cannot start the testnet job. It requires
-`SWISSLEDGER_TESTNET_ADDRESS` (credential-free RPC URL) and
-`SWISSLEDGER_TESTNET_DEPLOY` (deployer key). Never put either value in files,
-command lines, artifacts, issue text, or logs. PR validation creates fresh
+fork PRs remain secret-free and cannot start the testnet job. It requires the
+organization variable `SWISSLEDGER_TESTNET_RPC` (credential-free RPC URL),
+organization variable `SWISSLEDGER_TESTNET_ADDRESS` (expected public deployer
+address), and organization secret `SWISSLEDGER_TESTNET_DEPLOY` (deployer key).
+The scripts derive the key address and reject a mismatch. Never put the key or
+RPC credentials in files, command lines, artifacts, issue text, or logs. PR validation creates fresh
 testnet evidence only; it never starts a release.
 
 Each successful trusted run uploads `anonset-testnet-<commit>` for 90 days. It

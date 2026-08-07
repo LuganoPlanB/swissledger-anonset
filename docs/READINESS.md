@@ -30,8 +30,8 @@ substitute for a clean-checkout release or live-network result.
 ## Required external evidence — currently unverified
 
 The exact commit must still run the protected `.github/workflows/test.yml`
-testnet job, using the `swissledger-testnet` GitHub Environment and its real
-secrets. It may be an Environment-approved same-repository PR targeting `main`
+testnet job, using the `swissledger-testnet` GitHub Environment, organization
+RPC/address variables, and the real organization deployer secret. It may be an Environment-approved same-repository PR targeting `main`
 or the protected `main` run required for release; fork PRs remain secret-free.
 That run must deploy a **fresh chain-222** stack, complete the full reusable and
 replay-protected smoke, upload `anonset-testnet-<commit>`, and pass downstream

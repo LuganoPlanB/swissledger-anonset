@@ -17,8 +17,9 @@ listed in [DEPLOYMENT.md](DEPLOYMENT.md).
 | Member manager | Adds/removes approved commitments only. Cannot transfer ownership. | Approval reference, transaction hash, root/count. |
 | Incident lead | Coordinates containment and disclosure; does not receive private keys. | Timeline, decision log, sanitized evidence archive. |
 
-Keep `SWISSLEDGER_TESTNET_ADDRESS` and `SWISSLEDGER_TESTNET_DEPLOY` as GitHub
-Environment secrets, not repository, organization-wide, or PR secrets. Give
+Keep `SWISSLEDGER_TESTNET_RPC` and `SWISSLEDGER_TESTNET_ADDRESS` as scoped
+organization variables and `SWISSLEDGER_TESTNET_DEPLOY` as a scoped organization
+secret. Do not duplicate them as repository or PR configuration. Give
 Environment approval access only to named operators and review it after every
 role change. The RPC URL must not contain credentials. Never print a private
 key, identity JSON, mnemonic, GitHub token, raw secret value, or authenticated

@@ -50,7 +50,8 @@ jobs:
       group: swissledger-testnet-deployer-222
       cancel-in-progress: false
     env:
-      SWISSLEDGER_TESTNET_ADDRESS: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
+      SWISSLEDGER_TESTNET_RPC: ${{ vars.SWISSLEDGER_TESTNET_RPC }}
+      SWISSLEDGER_TESTNET_ADDRESS: ${{ vars.SWISSLEDGER_TESTNET_ADDRESS }}
       SWISSLEDGER_TESTNET_DEPLOY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
       SWISSLEDGER_TESTNET_CHAIN_ID: '222'
     steps:
@@ -62,8 +63,11 @@ jobs:
       - run: node scripts/generate-build-info.mjs
       - name: Normalize mandatory JSON-RPC params
         run: |
-          python3 scripts/rpc-proxy.py --target "$SWISSLEDGER_TESTNET_ADDRESS" > rpc-proxy.log 2>&1 &
-          echo 'SWISSLEDGER_TESTNET_ADDRESS=http://127.0.0.1:8545' >> "$GITHUB_ENV"
+          test -n "$SWISSLEDGER_TESTNET_RPC" || { echo 'missing org variable SWISSLEDGER_TESTNET_RPC' >&2; exit 1; }
+          test -n "$SWISSLEDGER_TESTNET_ADDRESS" || { echo 'missing org variable SWISSLEDGER_TESTNET_ADDRESS' >&2; exit 1; }
+          test -n "$SWISSLEDGER_TESTNET_DEPLOY" || { echo 'missing org secret SWISSLEDGER_TESTNET_DEPLOY' >&2; exit 1; }
+          python3 scripts/rpc-proxy.py --target "$SWISSLEDGER_TESTNET_RPC" > rpc-proxy.log 2>&1 &
+          echo 'SWISSLEDGER_TESTNET_RPC=http://127.0.0.1:8545' >> "$GITHUB_ENV"
           for _ in $(seq 1 30); do bin/swissledger-cast chain-id --rpc-url http://127.0.0.1:8545 && exit 0; sleep 1; done
           echo 'RPC params proxy did not become ready' >&2
           exit 1

@@ -16,9 +16,12 @@ test("workflow permits Environment-approved same-repository PR testnet validatio
     assert.match(workflow, /needs: local-gates/);
     assert.match(workflow, /environment: swissledger-testnet/);
     assert.match(workflow, /swissledger-testnet-deployer-222/);
-    assert.match(workflow, /SWISSLEDGER_TESTNET_ADDRESS/);
+    assert.match(workflow, /SWISSLEDGER_TESTNET_RPC: \$\{\{ vars\.SWISSLEDGER_TESTNET_RPC \}\}/);
+    assert.match(workflow, /SWISSLEDGER_TESTNET_ADDRESS: \$\{\{ vars\.SWISSLEDGER_TESTNET_ADDRESS \}\}/);
     assert.match(workflow, /SWISSLEDGER_TESTNET_DEPLOY/);
-    assert.match(workflow, /scripts\/rpc-proxy\.py --target "\$SWISSLEDGER_TESTNET_ADDRESS"/);
+    assert.match(workflow, /scripts\/rpc-proxy\.py --target "\$SWISSLEDGER_TESTNET_RPC"/);
+    assert.match(workflow, /missing org variable SWISSLEDGER_TESTNET_RPC/);
+    assert.match(workflow, /missing org variable SWISSLEDGER_TESTNET_ADDRESS/);
     assert.match(workflow, /github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/);
     assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
     assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
@@ -53,8 +56,8 @@ test("evidence generator validates fixture schema, hashes, and secret rejection"
 });
 
 test("testnet deployment rejects invalid credentials and the production chain before broadcasting", () => {
-    const base = { FORGE_BIN: "/definitely/missing", CAST_BIN: "/definitely/missing", SWISSLEDGER_TESTNET_ADDRESS: "https://testnet.example", SWISSLEDGER_TESTNET_DEPLOY: "0x" + "1".repeat(64) };
-    for (const [extra, expected] of [[{ SWISSLEDGER_TESTNET_CHAIN_ID: "110" }, /only SwissLedger testnet/], [{ SWISSLEDGER_TESTNET_DEPLOY: "invalid" }, /32-byte private key/], [{ SWISSLEDGER_TESTNET_ADDRESS: "https:\/\/user:pass@example" }, /credential-free/], [{ SWISSLEDGER_TESTNET_VERIFIER_GAS_LIMIT: "nope" }, /operational ceiling/], [{ SWISSLEDGER_TESTNET_REGISTRY_GAS_LIMIT: "20000000" }, /operational ceiling/]]) {
+    const base = { FORGE_BIN: "/definitely/missing", CAST_BIN: "/definitely/missing", SWISSLEDGER_TESTNET_RPC: "https://testnet.example", SWISSLEDGER_TESTNET_ADDRESS: "0x00000000000000000000000000000000000000aa", SWISSLEDGER_TESTNET_DEPLOY: "0x" + "1".repeat(64) };
+    for (const [extra, expected] of [[{ SWISSLEDGER_TESTNET_CHAIN_ID: "110" }, /only SwissLedger testnet/], [{ SWISSLEDGER_TESTNET_DEPLOY: "invalid" }, /32-byte private key/], [{ SWISSLEDGER_TESTNET_RPC: "https:\/\/user:pass@example" }, /credential-free/], [{ SWISSLEDGER_TESTNET_RPC: "" }, /missing SWISSLEDGER_TESTNET_RPC/], [{ SWISSLEDGER_TESTNET_ADDRESS: "" }, /expected public deployer address/], [{ SWISSLEDGER_TESTNET_VERIFIER_GAS_LIMIT: "nope" }, /operational ceiling/], [{ SWISSLEDGER_TESTNET_REGISTRY_GAS_LIMIT: "20000000" }, /operational ceiling/]]) {
         const result = spawnSync(deploy, ["/tmp/unused.json"], { cwd: root, env: { ...process.env, ...base, ...extra }, encoding: "utf8" });
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, expected);
@@ -71,13 +74,17 @@ test("testnet deployment writes a secret-free three-contract manifest against a 
     chmodSync(forge, 0o755); chmodSync(cast, 0o755);
     try {
         const privateKey = "0x" + "a".repeat(64);
-        execFileSync(deploy, [out], { cwd: root, env: { ...process.env, FORGE_BIN: forge, CAST_BIN: cast, SWISSLEDGER_TESTNET_ADDRESS: "https://testnet.example", SWISSLEDGER_TESTNET_DEPLOY: privateKey } });
+        const deploymentEnvironment = { ...process.env, FORGE_BIN: forge, CAST_BIN: cast, SWISSLEDGER_TESTNET_RPC: "https://testnet.example", SWISSLEDGER_TESTNET_ADDRESS: "0x00000000000000000000000000000000000000aa", SWISSLEDGER_TESTNET_DEPLOY: privateKey };
+        execFileSync(deploy, [out], { cwd: root, env: deploymentEnvironment });
         const manifest = JSON.parse(readFileSync(out));
         assert.equal(manifest.chainId, 222);
         assert.equal(manifest.operationalGasCeiling, 20000000);
         assert.equal(manifest.deployments.length, 3);
         assert.deepEqual(manifest.deployments.map(({ gasLimit }) => gasLimit), ["1000000", "5000000", "5000000"]);
         assert.equal(JSON.stringify(manifest).includes(privateKey), false);
+        const mismatch = spawnSync(deploy, [out], { cwd: root, env: { ...deploymentEnvironment, SWISSLEDGER_TESTNET_ADDRESS: "0x00000000000000000000000000000000000000ab" }, encoding: "utf8" });
+        assert.notEqual(mismatch.status, 0);
+        assert.match(mismatch.stderr, /derived deployer does not match/);
         for (const [mock, expected] of [
             [{ MOCK_CHAIN_ID: "110" }, /chain ID is not 222/],
             [{ MOCK_RECEIPT: '{"status":"0x0","gasUsed":"0x5208"}' }, /not successful/],
@@ -87,7 +94,7 @@ test("testnet deployment writes a secret-free three-contract manifest against a 
             [{ MOCK_FORGE_JSON: "not-json" }, /returned no deployment address/],
             [{ MOCK_FORGE_EXIT: "17" }, /returned no deployment address/],
         ]) {
-            const result = spawnSync(deploy, [out], { cwd: root, env: { ...process.env, FORGE_BIN: forge, CAST_BIN: cast, SWISSLEDGER_TESTNET_ADDRESS: "https://testnet.example", SWISSLEDGER_TESTNET_DEPLOY: privateKey, ...mock }, encoding: "utf8" });
+            const result = spawnSync(deploy, [out], { cwd: root, env: { ...deploymentEnvironment, ...mock }, encoding: "utf8" });
             assert.notEqual(result.status, 0);
             assert.match(result.stderr, expected);
         }
