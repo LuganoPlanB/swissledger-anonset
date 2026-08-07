@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const forge = resolve(root, "bin/swissledger-forge");
 const artifacts = [
     "out/MerkleRootRegistryZK.sol/MerkleRootRegistryZK.json",
+    "out/PoseidonT3.sol/PoseidonT3.json",
     "out/Semaphore.sol/Semaphore.json",
     "out/SemaphoreVerifier.sol/SemaphoreVerifier.json"
 ];

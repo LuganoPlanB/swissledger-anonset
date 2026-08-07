@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy exactly one fresh SemaphoreVerifier -> Semaphore -> Registry stack.
+# Deploy exactly one fresh PoseidonT3 -> SemaphoreVerifier -> Semaphore -> Registry stack.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,6 +14,7 @@ PRIVATE_KEY=${SWISSLEDGER_TESTNET_DEPLOY:-}
 # These are local operational ceilings (measured use plus generous margin),
 # not a claim about a remote testnet block-gas limit.
 OPERATIONAL_MAX_GAS_LIMIT=20000000
+POSEIDON_GAS_LIMIT=${SWISSLEDGER_TESTNET_POSEIDON_GAS_LIMIT:-5000000}
 VERIFIER_GAS_LIMIT=${SWISSLEDGER_TESTNET_VERIFIER_GAS_LIMIT:-5000000}
 SEMAPHORE_GAS_LIMIT=${SWISSLEDGER_TESTNET_SEMAPHORE_GAS_LIMIT:-5000000}
 REGISTRY_GAS_LIMIT=${SWISSLEDGER_TESTNET_REGISTRY_GAS_LIMIT:-5000000}
@@ -31,7 +32,7 @@ if [[ ! $RPC_URL =~ ^https?://[^/@?#]+ ]] || [[ $RPC_URL =~ ^https?://[^/]*@ ]];
 fi
 [[ $PRIVATE_KEY =~ ^0x[0-9a-fA-F]{64}$ ]] || die 'SWISSLEDGER_TESTNET_DEPLOY must be a 32-byte private key'
 [[ $EXPECTED_DEPLOYER =~ ^0x[0-9a-fA-F]{40}$ ]] || die 'SWISSLEDGER_TESTNET_ADDRESS must be the expected public deployer address'
-for gas_limit in "$VERIFIER_GAS_LIMIT" "$SEMAPHORE_GAS_LIMIT" "$REGISTRY_GAS_LIMIT"; do
+for gas_limit in "$POSEIDON_GAS_LIMIT" "$VERIFIER_GAS_LIMIT" "$SEMAPHORE_GAS_LIMIT" "$REGISTRY_GAS_LIMIT"; do
     if [[ ! $gas_limit =~ ^[1-9][0-9]*$ ]] || (( gas_limit >= OPERATIONAL_MAX_GAS_LIMIT )); then
         die "gas limit must be a positive integer below the $OPERATIONAL_MAX_GAS_LIMIT operational ceiling"
     fi
@@ -45,10 +46,11 @@ mkdir -p "$(dirname "$OUTPUT")"
 "$FORGE" build >/dev/null
 
 deploy() {
-    local name=$1 gas_limit=$2 contract=$3 result address tx receipt gas
-    shift 3
+    local name=$1 gas_limit=$2 contract=$3 libraries=$4 result address tx receipt gas runtime runtime_hash
+    shift 4
     result="$TMP_DIR/$name.json"
     local -a command=("$FORGE" create "$contract" --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --legacy --gas-price 0 --gas-limit "$gas_limit" --chain "$CHAIN_ID" --broadcast --json)
+    [[ -z $libraries ]] || command+=(--libraries "$libraries")
     (( $# == 0 )) || command+=(--constructor-args "$@")
     if ! "${command[@]}" >"$result"; then
         die "$name deployment command failed"
@@ -58,26 +60,39 @@ deploy() {
     receipt="$($CAST receipt --json "$tx" --rpc-url "$RPC_URL")"
     gas="$(node -e 'const v=JSON.parse(process.argv[1]); if(v.status!=="0x1"||!v.gasUsed)process.exit(1); process.stdout.write(BigInt(v.gasUsed).toString())' "$receipt")" || die "$name transaction was not successful"
     (( gas < gas_limit )) || die "$name exhausted its explicit gas cap"
-    [[ "$($CAST code "$address" --rpc-url "$RPC_URL")" =~ ^0x[0-9a-fA-F]{2,}$ ]] || die "$name has empty runtime code"
-    node - "$name" "$address" "$tx" "$gas_limit" "$gas" "$result" <<'NODE'
-const [name,address,transactionHash,gasLimit,gasUsed,raw] = process.argv.slice(2);
-console.log(JSON.stringify({name,address,transactionHash,gasLimit,gasUsed,raw:JSON.parse(require('fs').readFileSync(raw))}));
+    runtime="$($CAST code "$address" --rpc-url "$RPC_URL")"
+    [[ $runtime =~ ^0x[0-9a-fA-F]{2,}$ ]] || die "$name has empty runtime code"
+    runtime_hash="$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(process.argv[1].toLowerCase()).digest("hex"))' "$runtime")"
+    node - "$name" "$address" "$tx" "$gas_limit" "$gas" "$runtime_hash" "$result" <<'NODE'
+const [name,address,transactionHash,gasLimit,gasUsed,runtimeCodeSha256,raw] = process.argv.slice(2);
+console.log(JSON.stringify({name,address,transactionHash,gasLimit,gasUsed,runtimeCodeSha256,raw:JSON.parse(require('fs').readFileSync(raw))}));
 NODE
 }
 
-VERIFIER="$(deploy verifier "$VERIFIER_GAS_LIMIT" 'node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier')"
+POSEIDON="$(deploy poseidon "$POSEIDON_GAS_LIMIT" 'vendor/poseidon-solidity/PoseidonT3.sol:PoseidonT3' '')"
+POSEIDON_ADDRESS="$(node -e 'console.log(JSON.parse(process.argv[1]).address)' "$POSEIDON")"
+VERIFIER="$(deploy verifier "$VERIFIER_GAS_LIMIT" 'node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier' '')"
 VERIFIER_ADDRESS="$(node -e 'console.log(JSON.parse(process.argv[1]).address)' "$VERIFIER")"
-SEMAPHORE="$(deploy semaphore "$SEMAPHORE_GAS_LIMIT" 'node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore' "$VERIFIER_ADDRESS")"
+SEMAPHORE="$(deploy semaphore "$SEMAPHORE_GAS_LIMIT" 'node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore' "vendor/poseidon-solidity/PoseidonT3.sol:PoseidonT3:$POSEIDON_ADDRESS" "$VERIFIER_ADDRESS")"
 SEMAPHORE_ADDRESS="$(node -e 'console.log(JSON.parse(process.argv[1]).address)' "$SEMAPHORE")"
-REGISTRY="$(deploy registry "$REGISTRY_GAS_LIMIT" 'src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK' "$SEMAPHORE_ADDRESS")"
+SEMAPHORE_CODE="$($CAST code "$SEMAPHORE_ADDRESS" --rpc-url "$RPC_URL")"
+node - "$SEMAPHORE_CODE" "$POSEIDON_ADDRESS" <<'NODE' || die 'Semaphore Poseidon library wiring is invalid'
+const [runtime,expected]=process.argv.slice(2);
+const code=runtime.replace(/^0x/, '').toLowerCase();
+const address=expected.replace(/^0x/, '').toLowerCase();
+if (code.split(address).length - 1 !== 6) process.exit(1);
+NODE
+REGISTRY="$(deploy registry "$REGISTRY_GAS_LIMIT" 'src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK' '' "$SEMAPHORE_ADDRESS")"
 REGISTRY_ADDRESS="$(node -e 'console.log(JSON.parse(process.argv[1]).address)' "$REGISTRY")"
 [[ "${REGISTRY_ADDRESS,,}" != "${SEMAPHORE_ADDRESS,,}" ]] || die 'registry address is invalid'
 [[ "${SEMAPHORE_ADDRESS,,}" != "${VERIFIER_ADDRESS,,}" ]] || die 'semaphore address is invalid'
-[[ "${VERIFIER_ADDRESS,,}" == "$("$CAST" call "$SEMAPHORE_ADDRESS" 'verifier()(address)' --rpc-url "$RPC_URL")" ]] || die 'Semaphore verifier wiring is invalid'
-[[ "${SEMAPHORE_ADDRESS,,}" == "$("$CAST" call "$REGISTRY_ADDRESS" 'semaphore()(address)' --rpc-url "$RPC_URL")" ]] || die 'Registry Semaphore wiring is invalid'
-node - "$OUTPUT" "$CHAIN_ID" "$RPC_URL" "$DEPLOYER" "$VERIFIER" "$SEMAPHORE" "$REGISTRY" <<'NODE'
-const [output,chainId,rpcUrl,deployer,verifier,semaphore,registry] = process.argv.slice(2);
+ACTUAL_VERIFIER="$($CAST call "$SEMAPHORE_ADDRESS" 'verifier()(address)' --rpc-url "$RPC_URL")"
+ACTUAL_SEMAPHORE="$($CAST call "$REGISTRY_ADDRESS" 'semaphore()(address)' --rpc-url "$RPC_URL")"
+[[ "${VERIFIER_ADDRESS,,}" == "${ACTUAL_VERIFIER,,}" ]] || die 'Semaphore verifier wiring is invalid'
+[[ "${SEMAPHORE_ADDRESS,,}" == "${ACTUAL_SEMAPHORE,,}" ]] || die 'Registry Semaphore wiring is invalid'
+node - "$OUTPUT" "$CHAIN_ID" "$RPC_URL" "$DEPLOYER" "$POSEIDON" "$VERIFIER" "$SEMAPHORE" "$REGISTRY" <<'NODE'
+const [output,chainId,rpcUrl,deployer,poseidon,verifier,semaphore,registry] = process.argv.slice(2);
 const host = new URL(rpcUrl).host;
-const deployments = [verifier,semaphore,registry].map(JSON.parse);
-require('fs').writeFileSync(output, JSON.stringify({schema:1,chainId:Number(chainId),rpcHost:host,deployer,operationalGasCeiling:20000000,deployments,verifier:deployments[0].address,semaphore:deployments[1].address,registry:deployments[2].address,wiring:{semaphoreVerifier:deployments[0].address,registrySemaphore:deployments[1].address}}));
+const deployments = [poseidon,verifier,semaphore,registry].map(JSON.parse);
+require('fs').writeFileSync(output, JSON.stringify({schema:1,chainId:Number(chainId),rpcHost:host,deployer,operationalGasCeiling:20000000,deployments,poseidon:deployments[0].address,verifier:deployments[1].address,semaphore:deployments[2].address,registry:deployments[3].address,wiring:{semaphorePoseidon:deployments[0].address,semaphoreVerifier:deployments[1].address,registrySemaphore:deployments[2].address}}));
 NODE

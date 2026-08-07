@@ -23,9 +23,10 @@ Observed pinned versions: Node `v24.18.1`, npm `11.16.0`, and SwissLedger
 Forge/Cast/Anvil `1.11.0` at
 `7ac07c5731c9a768edcab2b8506047e4d9dc587c`; the configured compiler is Solc
 `0.8.30` with Istanbul EVM. `npm audit --omit=dev` reported zero findings.
-The reproducibility check produced matching artifact hashes for the registry,
-Semaphore, and SemaphoreVerifier. These are local worktree observations, not a
-substitute for a clean-checkout release or live-network result.
+The reproducibility check produced matching artifact hashes for the vendored
+PoseidonT3 library, registry, Semaphore, and SemaphoreVerifier. These are local
+worktree observations, not a substitute for a clean-checkout release or
+live-network result.
 
 ## Required external evidence — currently unverified
 

@@ -54,7 +54,7 @@ administrative action.
 
 | Network | Chain ID | Purpose |
 |---|---:|---|
-| SwissLedger testnet | `222` | Protected CI deploys a new three-contract stack for each trusted run. |
+| SwissLedger testnet | `222` | Protected CI deploys a new application stack plus its linked PoseidonT3 library for each trusted run. |
 | SwissLedger production | `110` | Manual governance-gated promotion only; no workflow deploys it. |
 
 The test workflow runs local gates for pull requests, `main` pushes, and manual

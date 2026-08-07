@@ -20,11 +20,13 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.doesNotMatch(agents, /clients\/merklezk/);
     assert.match(agents, /Node client intentionally uses `ethers`/);
     assert.match(agents, /do not add Hardhat or Truffle/);
+    assert.match(agents, /vendor\/poseidon-solidity\/PoseidonT3\.sol/);
+    assert.match(agents, /do not substitute PoseidonT6/);
     assert.match(deployment, /external Solidity and ZK-protocol audit/);
     assert.match(deployment, /zero native-token balance is valid/);
     assert.doesNotMatch(deployment, /nonzero registered balance/);
     const operations = text("docs/OPERATIONS.md");
-    for (const incident of ["Leaked testnet deployer key", "Wrong-chain RPC", "Partial three-contract deployment", "Compromised member manager", "Ownership acceptance failure", "Vulnerable Semaphore\/toolchain dependency", "Bad GitHub release"]) {
+    for (const incident of ["Leaked testnet deployer key", "Wrong-chain RPC", "Partial linked-stack deployment", "Compromised member manager", "Ownership acceptance failure", "Vulnerable Semaphore\/toolchain dependency", "Bad GitHub release"]) {
         assert.match(operations, new RegExp(incident));
     }
     assert.match(operations, /Detection \| Containment \| Recovery \| Preserve evidence/);

@@ -65,7 +65,7 @@ function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "anonset-release-"));
   const out = join(directory, "out"); const evidence = join(directory, "evidence"); const release = join(directory, "artifacts", "release-bundle");
   mkdirSync(evidence, { recursive: true }); mkdirSync(join(directory, "artifacts", "release-input"), { recursive: true });
-  const contracts = ["MerkleRootRegistryZK", "Semaphore", "SemaphoreVerifier"].map((name, index) => {
+  const contracts = ["MerkleRootRegistryZK", "PoseidonT3", "Semaphore", "SemaphoreVerifier"].map((name, index) => {
     const artifact = { abi: [{ type: "function", name }], bytecode: { object: `60${index}` } };
     mkdirSync(join(out, `${name}.sol`), { recursive: true });
     writeFileSync(join(out, `${name}.sol`, `${name}.json`), JSON.stringify(artifact));
@@ -77,6 +77,7 @@ function fixture() {
   writeFileSync(join(directory, "artifacts", "release-input", "gas-report.txt"), "gas report\n"); writeFileSync(join(directory, "artifacts", "release-input", "test-summary.txt"), "tests pass\n");
   writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }));
   mkdirSync(join(directory, "src", "generated"), { recursive: true }); writeFileSync(join(directory, "src", "generated", "BuildInfo.sol"), 'VERSION = "1.0.0"');
+  mkdirSync(join(directory, "vendor", "poseidon-solidity"), { recursive: true }); writeFileSync(join(directory, "vendor", "poseidon-solidity", "PoseidonT3.sol"), "library PoseidonT3 {}\n");
   return { directory, out, evidence, release };
 }
 
@@ -97,7 +98,7 @@ test("release bundle is reproducible, complete, and secret-free", () => {
     const first = read(join(release, "checksums.sha256"));
     execFileSync(process.execPath, [join(root, "scripts/release-bundle.mjs"), evidence, release, directory]);
     assert.equal(read(join(release, "checksums.sha256")), first);
-    for (const path of ["build-metadata.json", "source/generated/BuildInfo.sol", "contracts/MerkleRootRegistryZK.abi.json", "contracts/Semaphore.bytecode.txt", "evidence/manifest.json", "evidence/dependencies.cdx.json", "gas-report.txt", "test-summary.txt"]) assert.ok(read(join(release, path)).length > 0);
+    for (const path of ["build-metadata.json", "source/generated/BuildInfo.sol", "source/vendor/poseidon-solidity/PoseidonT3.sol", "contracts/MerkleRootRegistryZK.abi.json", "contracts/PoseidonT3.bytecode.txt", "contracts/Semaphore.bytecode.txt", "evidence/manifest.json", "evidence/dependencies.cdx.json", "gas-report.txt", "test-summary.txt"]) assert.ok(read(join(release, path)).length > 0);
     const archive = join(directory, "artifacts", "release-bundle.tar.gz");
     execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-C", release, "-czf", archive, "."]);
     const firstArchive = sha(readFileSync(archive));

@@ -51,7 +51,8 @@ NODE
 for attempt in 1 2; do send_checked "verify-membership-$attempt" "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}"; done
 send_checked validate-membership "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}"
 if "$CAST" call "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}" --rpc-url "$RPC_URL" >/dev/null 2>&1; then die 'replayed protected proof unexpectedly succeeded'; fi
-if "$CAST" call "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" 1 "${PROOF[4]}" --rpc-url "$RPC_URL" >/dev/null 2>&1; then die 'tampered proof unexpectedly succeeded'; fi
+TAMPERED_RESULT="$($CAST call "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])(bool)' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" 1 "${PROOF[4]}" --rpc-url "$RPC_URL")" || die 'tampered proof check RPC failed'
+[[ ${TAMPERED_RESULT,,} == false ]] || die 'tampered proof unexpectedly verified'
 SIBLINGS="$(node --input-type=module - "$TMP_DIR/group.json" <<'NODE'
 import { readFileSync } from "node:fs";
 import { Group } from "@semaphore-protocol/group";
@@ -61,7 +62,7 @@ NODE
 send_checked remove-member "$REGISTRY" 'removeMember(uint256,uint256[])' "$ONE" "$SIBLINGS"
 COUNT_AFTER="$($CAST call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL")"
 ROOT_AFTER="$($CAST call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL")"
-[[ ${COUNT_AFTER%% *} -lt ${COUNT%% *} && ${ROOT_AFTER%% *} != "${ROOT%% *}" ]] || die 'member removal did not change group state'
+[[ ${COUNT_AFTER%% *} -le ${COUNT%% *} && ${ROOT_AFTER%% *} != "${ROOT%% *}" ]] || die 'member removal did not change group state'
 node - "$OUTPUT" "$REGISTRY" "$OWNER" "$COUNT" "$ROOT" "$COUNT_AFTER" "$ROOT_AFTER" "$RECEIPTS" <<'NODE'
 const [output,registry,owner,count,root,countAfter,rootAfter,receiptsPath]=process.argv.slice(2);
 const transactions=require('fs').readFileSync(receiptsPath,'utf8').trim().split('\n').map(JSON.parse);

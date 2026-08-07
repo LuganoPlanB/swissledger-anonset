@@ -8,7 +8,7 @@ if (!evidenceDirectory || !outputDirectory) throw new Error("usage: release-bund
 const root = resolve(sourceDirectory);
 const evidence = resolve(evidenceDirectory);
 const output = resolve(outputDirectory);
-const contracts = ["MerkleRootRegistryZK", "Semaphore", "SemaphoreVerifier"];
+const contracts = ["MerkleRootRegistryZK", "PoseidonT3", "Semaphore", "SemaphoreVerifier"];
 const forbidden = /(private.?key|mnemonic|authorization|github_token|x-access-token|https?:\/\/[^\s/@]+:[^\s/@]+@)/i;
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const copy = (from, to) => cpSync(from, to, { force: true });
@@ -18,8 +18,9 @@ rmSync(output, { recursive: true, force: true });
 mkdirSync(resolve(output, "contracts"), { recursive: true });
 mkdirSync(resolve(output, "evidence"), { recursive: true });
 cpSync(resolve(root, "src"), resolve(output, "source"), { recursive: true });
+cpSync(resolve(root, "vendor"), resolve(output, "source", "vendor"), { recursive: true });
 const evidenceManifest = json(resolve(evidence, "manifest.json"));
-if (evidenceManifest.schema !== 1 || evidenceManifest.chainId !== 222 || evidenceManifest.contracts?.length !== 3) throw new Error("invalid deployment evidence");
+if (evidenceManifest.schema !== 1 || evidenceManifest.chainId !== 222 || evidenceManifest.contracts?.length !== 4) throw new Error("invalid deployment evidence");
 
 for (const name of contracts) {
   const artifactPath = resolve(root, "out", `${name}.sol`, `${name}.json`);

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const deploymentArtifacts = [
     ["registry", "out/MerkleRootRegistryZK.sol/MerkleRootRegistryZK.json"],
+    ["PoseidonT3", "out/PoseidonT3.sol/PoseidonT3.json"],
     ["Semaphore", "out/Semaphore.sol/Semaphore.json"],
     ["SemaphoreVerifier", "out/SemaphoreVerifier.sol/SemaphoreVerifier.json"]
 ];

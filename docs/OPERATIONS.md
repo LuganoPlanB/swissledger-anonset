@@ -43,9 +43,9 @@ on a mismatch.
 
 ## Deployment, upgrade, and recovery rules
 
-- Fresh CI deployment means a new `SemaphoreVerifier → Semaphore →
-  MerkleRootRegistryZK` stack on chain 222. Its addresses are run-specific
-  evidence, never a canonical address book.
+- Fresh CI deployment means a new vendored `PoseidonT3` library and
+  `SemaphoreVerifier → Semaphore → MerkleRootRegistryZK` stack on chain 222.
+  Its addresses are run-specific evidence, never a canonical address book.
 - A failure after one or two deployment transactions is a partial deployment:
   stop broadcasting, retain public hashes/receipts/nonce/RPC host label, and
   notify the change owner. Do not call it successful and do not silently reuse
@@ -80,7 +80,7 @@ approvals, and recovery decision. Redact secrets before attaching any evidence.
 |---|---|---|---|---|
 | Leaked testnet deployer key | Secret scanner alert, unexpected sender activity, or GitHub audit log. | Disable Environment access; revoke/delete the secret; stop queued testnet jobs. | Create/fund/register a replacement testnet address, update the protected secret, and run a fresh chain-222 workflow. | Old public address, timestamps, workflow IDs, transactions, revocation record; never the key. |
 | Wrong-chain RPC | Workflow/script chain-ID check fails or receipt is on an unexpected network. | Stop before broadcast; disable the endpoint in Environment settings. | Correct the approved endpoint, independently check chain 222 or 110 as applicable, and rerun only under normal approval. | RPC host label, expected/actual chain ID, failed command category, no URL credentials. |
-| Partial three-contract deployment or nonce contention | Missing manifest contract/receipt, failed receipt, or provider nonce conflict. | Stop all broadcasts for that deployer/network; preserve the temporary manifest and receipts. | Reconcile nonce with provider; deploy a new complete approved stack—do not treat partial addresses as canonical. | Commit, sender, nonce, contract addresses, transaction hashes, receipts, gas values. |
+| Partial linked-stack deployment or nonce contention | Missing Poseidon/application contract receipt, failed receipt, or provider nonce conflict. | Stop all broadcasts for that deployer/network; preserve the temporary manifest and receipts. | Reconcile nonce with provider; deploy a new complete approved stack—do not treat partial addresses as canonical. | Commit, sender, nonce, contract addresses, transaction hashes, receipts, gas values. |
 | Compromised member manager | Unauthorized `MemberAdded`/`MemberRemoved`, alert, or manager report. | Pause application mutation workflow; owner removes the manager if safe; preserve chain state. | Add an approved replacement manager, review affected root/members, and issue a new deployment only if governance determines it necessary. | Manager address, events, approved membership record, root/count before and after. |
 | Ownership acceptance failure or owner key loss | `pendingOwner` remains set, acceptance reverts, or multisig signer loss is reported. | Do not transfer again blindly; current owner cancels/replaces pending transfer if still controlled. | Reconfirm exact recipient and execute two-step handover; invoke multisig custody recovery for lost production control. | Ownership events, pending address, multisig approval IDs, recovery decision. |
 | Vulnerable Semaphore/toolchain dependency | Advisory, lockfile review, CI dependency-policy failure, or vendor notice. | Block release/promotion; pin/disable affected workflow as directed by the owner. | Assess reachability, update reviewed pins/overrides, run all local gates plus fresh testnet evidence, and obtain new audit/governance review if production impact exists. | Advisory ID, versions, reachability decision, SBOM, gate results, approvals. |

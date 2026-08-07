@@ -33,6 +33,8 @@ removed via transactions, and the root changes automatically.
   Semaphore group creation, anonymous membership verification.
 - `Semaphore` (imported) — group management, Merkle tree, proof routing.
 - `SemaphoreVerifier` (imported) — Groth16 proof verification.
+- `vendor/poseidon-solidity/PoseidonT3.sol` — exact vendored MIT source linked
+  into Semaphore for two-child LeanIMT hashing; do not substitute PoseidonT6.
 - `BuildInfo` — auto-generated contract embedding npm package version.
 
 ### Anonymous membership (no nullifier tracking)

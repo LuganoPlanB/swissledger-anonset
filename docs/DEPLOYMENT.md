@@ -38,8 +38,8 @@ main-only. The Environment uses:
 
 It rejects every chain other than `222`, derives the deployer from the secret
 and checks it equals the public address variable, serializes deployment by
-deployer/network, and
-deploys `SemaphoreVerifier → Semaphore → MerkleRootRegistryZK` with explicit
+deployer/network, and deploys the vendored `PoseidonT3` library followed by
+`SemaphoreVerifier → Semaphore → MerkleRootRegistryZK` with explicit
 legacy, zero-gas-price limits. `scripts/rpc-proxy.py --target <testnet-rpc>` is
 used in CI only for the documented mandatory-`params` RPC quirk. Do not export
 secrets or run these scripts in a shell whose history/logging will retain them.
@@ -76,16 +76,17 @@ production transaction, obtain all of the following:
    funded/registered production deployer. Private material stays in the
    approved signing system and is never pasted into a terminal, file, artifact,
    or issue.
-5. A written transaction plan for the three-contract order, legacy zero-price
-   settings if required by the provider, receipt/code/hash verification, and a
-   stop point after every transaction.
+5. A written transaction plan for the Poseidon library and three-contract
+   order, legacy zero-price settings if required by the provider,
+   receipt/code/hash verification, and a stop point after every transaction.
 
 If any check fails, stop. A partial deployment is not canonical: preserve
 transaction hashes and receipts, inform the change owner, and start a new
 approved deployment rather than claiming a rollback. After deployment, verify
-chain ID, code and ABI/bytecode hashes for all three addresses, Semaphore
-wiring/group ID, owner, managers, version, and both proof semantics using
-non-secret test identities. Publish only approved public evidence.
+chain ID, runtime-code hashes for all four addresses, clean-build ABI/bytecode
+hashes, Poseidon/Semaphore linking, Semaphore verifier and registry wiring,
+group ID, owner, managers, version, and both proof semantics using non-secret
+test identities. Publish only approved public evidence.
 
 ## Release relationship
 

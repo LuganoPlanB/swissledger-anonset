@@ -77,6 +77,8 @@ jobs:
         run: ./scripts/testnet-zk-smoke artifacts/testnet/deployment.json artifacts/testnet/smoke.json
       - name: Assemble secret-free evidence
         run: |
+          bin/swissledger-forge clean
+          bin/swissledger-forge build
           make dependency-evidence
           node scripts/testnet-evidence.mjs artifacts/testnet/deployment.json artifacts/testnet/smoke.json artifacts/testnet/evidence
       - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
@@ -100,5 +102,5 @@ jobs:
           path: downloaded-evidence
       - name: Validate downloaded evidence is self-consistent and secret-free
         run: |
-          node -e 'const fs=require("fs"),c=require("crypto");const d="downloaded-evidence",m=JSON.parse(fs.readFileSync(`${d}/manifest.json`));if(m.schema!==1||m.chainId!==222||!Array.isArray(m.contracts)||m.contracts.length!==3)throw Error("invalid manifest schema");for(const x of m.contracts){const a=JSON.parse(fs.readFileSync(`${d}/${x.name}.json`));if(c.createHash("sha256").update(JSON.stringify(a.abi)).digest("hex")!==x.abiSha256||c.createHash("sha256").update(a.bytecode.object).digest("hex")!==x.bytecodeSha256)throw Error("artifact hash mismatch");}'
+          node -e 'const fs=require("fs"),c=require("crypto");const d="downloaded-evidence",m=JSON.parse(fs.readFileSync(`${d}/manifest.json`));if(m.schema!==1||m.chainId!==222||!Array.isArray(m.contracts)||m.contracts.length!==4)throw Error("invalid manifest schema");for(const x of m.contracts){const a=JSON.parse(fs.readFileSync(`${d}/${x.name}.json`));if(c.createHash("sha256").update(JSON.stringify(a.abi)).digest("hex")!==x.abiSha256||c.createHash("sha256").update(a.bytecode.object).digest("hex")!==x.bytecodeSha256)throw Error("artifact hash mismatch");}'
           ! grep -RIE '(private.?key|mnemonic|github_token|x-access-token|https?://[^/@]+:[^/@]+@)' downloaded-evidence

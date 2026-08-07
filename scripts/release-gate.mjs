@@ -14,7 +14,7 @@ const manifest = readJson("manifest.json");
 if (manifest.schema !== 1 || manifest.chainId !== 222 || manifest.commit !== expectedCommit) {
   throw new Error("testnet evidence does not describe the intended commit");
 }
-if (!Array.isArray(manifest.contracts) || manifest.contracts.length !== 3) throw new Error("testnet evidence has no complete contract identity");
+if (!Array.isArray(manifest.contracts) || manifest.contracts.length !== 4) throw new Error("testnet evidence has no complete contract identity");
 for (const contract of manifest.contracts) {
   if (!/^[A-Za-z][A-Za-z0-9]*$/.test(contract.name) || !/^[a-f0-9]{64}$/.test(contract.abiSha256) || !/^[a-f0-9]{64}$/.test(contract.bytecodeSha256)) {
     throw new Error("testnet evidence contains an invalid contract identity");
