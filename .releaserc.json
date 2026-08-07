@@ -1,17 +1,13 @@
 {
-  "branches": ["master", "main"],
+  "branches": ["main"],
+  "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/commit-analyzer",
-    "@semantic-release/release-notes-generator",
-    "@semantic-release/changelog",
-    "@semantic-release/npm",
-    [
-      "@semantic-release/git",
-      {
-        "assets": ["CHANGELOG.md", "package.json"],
-        "message": "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
-      }
-    ],
-    "@semantic-release/github"
+    ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    ["@semantic-release/github", {
+      "assets": ["artifacts/release-bundle.tar.gz", "artifacts/release-bundle/checksums.sha256"],
+      "successComment": false,
+      "failComment": false
+    }]
   ]
 }

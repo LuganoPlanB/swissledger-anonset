@@ -1,28 +1,74 @@
 name: release
 
 on:
-  push:
-    branches: [main, master]
+  workflow_run:
+    workflows: [test]
+    branches: [main]
+    types: [completed]
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: anonset-release-main
+  cancel-in-progress: false
 
 jobs:
-  release:
+  publish:
+    # workflow_run is trusted only after every required main job succeeded.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - name: Verify the triggering run contains trusted gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          jobs=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | select(.name == "local quality gate" or .name == "fresh testnet deployment and ZK smoke" or .name == "validate-testnet-evidence") | "\(.name):\(.conclusion)"')
+          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 3
+          ! printf '%s\n' "$jobs" | grep -v ':success$'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Verify the run SHA is still main
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: test "$(git rev-parse origin/main)" = "$EXPECTED_SHA"
+      - name: Download immutable testnet evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: gh run download "$RUN_ID" --name "anonset-testnet-$EXPECTED_SHA" --dir testnet-evidence
+      - uses: actions/setup-node@1e60f620b9541d4e35e7080e59e86e5b3fcae5a4 # v4.0.4
         with: { node-version: 24, cache: npm }
       - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
-      - run: make dependency-integrity
+      - run: node scripts/release-gate.mjs testnet-evidence "${{ github.event.workflow_run.head_sha }}"
       - run: node scripts/generate-build-info.mjs
       - run: bin/swissledger-forge build
-      - run: bin/swissledger-forge test -vvv
-      - run: npx semantic-release
+      - name: Capture release test reports
+        run: |
+          mkdir -p artifacts/release-input
+          bin/swissledger-forge test --gas-report | tee artifacts/release-input/gas-report.txt
+          npm test | tee artifacts/release-input/test-summary.txt
+          node scripts/release-bundle.mjs testnet-evidence artifacts/release-bundle
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C artifacts/release-bundle -czf artifacts/release-bundle.tar.gz .
+      - name: Refuse post-testnet release preparation mutations
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --exit-code -- CHANGELOG.md package.json package-lock.json src/generated/BuildInfo.sol
+      - run: npx --no-install semantic-release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
