@@ -45,6 +45,8 @@ used in CI only for the documented mandatory-`params` RPC quirk. Do not export
 secrets or run these scripts in a shell whose history/logging will retain them.
 The successful signed deployment receipts establish permissioned-network
 authorization; a zero native-token balance is valid on this zero-gas chain.
+The evidence manifest retains the upstream RPC hostname rather than the local
+mandatory-params proxy address.
 
 The subsequent smoke adds two ephemeral commitments, checks root/count/wiring,
 uses `verifyMembership` twice, uses `validateMembership` once, and confirms a
@@ -53,9 +55,15 @@ therefore proves a fresh testnet stack, not a production deployment.
 
 Download the `anonset-testnet-<commit>` artifact from the successful workflow.
 It includes `manifest.json`, contract ABI/bytecode hashes, receipt outcomes,
-and dependency evidence. The downstream validation job checks schema, hashes,
-and secret-shaped text. Record the workflow URL, commit SHA, artifact checksum,
-three addresses, and transaction hashes in the release decision. Explorer data
+dependency evidence, gas used by every successful deployment/protocol
+transaction, and observed deployment, identity-setup, proof-generation, and
+smoke durations. The manifest also provides aggregate deployment, protocol,
+and total gas figures. Durations are wall-clock observations from that workflow
+runner and RPC path; they are useful for regression comparison, not latency
+service-level guarantees. The downstream validation job checks schema, hashes,
+benchmark fields, and secret-shaped text. Record the workflow URL, commit SHA,
+artifact checksum, four addresses, transaction hashes, and benchmark summary in
+the release decision. Explorer data
 is supplementary: verify receipts, deployed code, constructor wiring, and
 artifact hashes against the manifest rather than relying on an explorer label.
 

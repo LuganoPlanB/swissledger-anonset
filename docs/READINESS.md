@@ -28,9 +28,9 @@ PoseidonT3 library, registry, Semaphore, and SemaphoreVerifier. These are local
 worktree observations, not a substitute for a clean-checkout release or
 live-network result.
 
-## Required external evidence — currently unverified
+## Required external evidence gate
 
-The exact commit must still run the protected `.github/workflows/test.yml`
+The exact commit must run the protected `.github/workflows/test.yml`
 testnet job, using the `swissledger-testnet` GitHub Environment, organization
 RPC/address variables, and the real organization deployer secret. It may be an Environment-approved same-repository PR targeting `main`
 or the protected `main` run required for release; fork PRs remain secret-free.
@@ -38,6 +38,12 @@ That run must deploy a **fresh chain-222** stack, complete the full reusable and
 replay-protected smoke, upload `anonset-testnet-<commit>`, and pass downstream
 evidence validation. This cannot be truthfully produced from a local checkout
 without the Environment secrets and must not be faked.
+
+The validated artifact is the authoritative per-commit record. It includes the
+upstream RPC host, four deployed addresses, successful receipt identities,
+per-operation gas and observed durations, aggregate gas/timing benchmarks, and
+the linked clean-build contract hashes. The PR check or protected `main` check
+must be current and green when the release decision is made.
 
 Only after that exact-commit artifact is available may the release workflow
 download it, compare rebuilt artifacts, and perform its GitHub-only release
@@ -48,10 +54,11 @@ with no automatic deployment path.
 
 | Residual risk / blocker | Decision owner | Required resolution |
 |---|---|---|
-| Exact-commit chain-222 evidence absent | Release maintainer / GitHub Environment approver | Run and retain the protected workflow artifact. |
+| Exact-commit chain-222 evidence | Release maintainer / GitHub Environment approver | Require a current green protected workflow and retain its validated artifact. |
 | External Solidity and ZK-protocol audit not asserted as complete | Production governance owner | Obtain audit and disposition findings before canonical promotion. |
 | Production owner/key governance not established | Production governance owner | Approve hardware-backed multisig, threshold, recovery, rotation, and manager policy. |
 | Canonical chain-110 deployment | Change owner and production multisig | Complete the manual deployment checklist and independent receipt/code verification. |
 
-Until every applicable row is resolved, describe the repository as locally
-verified and awaiting protected testnet/governance evidence—not production-ready.
+Use the current protected check and its artifact to determine whether the first
+row is satisfied. Until every applicable governance and promotion row is
+resolved, do not describe the system as approved for canonical production.

@@ -30,7 +30,9 @@ test("maintainer documentation points to current commands and paths", () => {
         assert.match(operations, new RegExp(incident));
     }
     assert.match(operations, /Detection \| Containment \| Recovery \| Preserve evidence/);
-    assert.match(text("docs/READINESS.md"), /Required external evidence — currently unverified/);
+    assert.match(text("docs/READINESS.md"), /Required external evidence gate/);
+    assert.match(deployment, /aggregate deployment, protocol,/);
+    assert.match(deployment, /wall-clock observations/);
     assert.match(readme, /same-repository PR whose base is `main`/);
     assert.match(readme, /fork PRs remain secret-free/);
     assert.match(readme, /PR validation creates fresh\s+testnet evidence only; it never starts a release/);

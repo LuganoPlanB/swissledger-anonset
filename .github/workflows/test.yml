@@ -66,6 +66,7 @@ jobs:
           test -n "$SWISSLEDGER_TESTNET_RPC" || { echo 'missing org variable SWISSLEDGER_TESTNET_RPC' >&2; exit 1; }
           test -n "$SWISSLEDGER_TESTNET_ADDRESS" || { echo 'missing org variable SWISSLEDGER_TESTNET_ADDRESS' >&2; exit 1; }
           test -n "$SWISSLEDGER_TESTNET_DEPLOY" || { echo 'missing org secret SWISSLEDGER_TESTNET_DEPLOY' >&2; exit 1; }
+          echo "SWISSLEDGER_TESTNET_RPC_HOST=$(node -e 'process.stdout.write(new URL(process.argv[1]).host)' "$SWISSLEDGER_TESTNET_RPC")" >> "$GITHUB_ENV"
           python3 scripts/rpc-proxy.py --target "$SWISSLEDGER_TESTNET_RPC" > rpc-proxy.log 2>&1 &
           echo 'SWISSLEDGER_TESTNET_RPC=http://127.0.0.1:8545' >> "$GITHUB_ENV"
           for _ in $(seq 1 30); do bin/swissledger-cast chain-id --rpc-url http://127.0.0.1:8545 && exit 0; sleep 1; done
