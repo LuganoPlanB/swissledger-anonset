@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Run the protocol smoke only after testnet-deploy created the fresh stack.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CAST="${CAST_BIN:-$PROJECT_DIR/bin/swissledger-cast}"
+DEPLOYMENT=${1:?usage: testnet-zk-smoke DEPLOYMENT_JSON OUTPUT_JSON}
+OUTPUT=${2:?usage: testnet-zk-smoke DEPLOYMENT_JSON OUTPUT_JSON}
+RPC_URL=${SWISSLEDGER_TESTNET_ADDRESS:-}
+PRIVATE_KEY=${SWISSLEDGER_TESTNET_DEPLOY:-}
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/anonset-zk.XXXXXX")"
+RECEIPTS="$TMP_DIR/receipts.ndjson"
+die() { printf 'testnet-zk-smoke: %s\n' "$*" >&2; exit 1; }
+trap 'rm -rf -- "$TMP_DIR"' EXIT HUP INT TERM
+[[ -n $RPC_URL && $PRIVATE_KEY =~ ^0x[0-9a-fA-F]{64}$ ]] || die 'testnet credentials are required'
+REGISTRY="$(node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1])); if(v.chainId!==222||!/^0x[0-9a-f]{40}$/i.test(v.registry||""))process.exit(1); console.log(v.registry)' "$DEPLOYMENT")" || die 'invalid deployment manifest'
+send_checked() {
+    local label=$1 response hash receipt
+    shift
+    response="$($CAST send --json "$@" --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --legacy --gas-price 0 --gas-limit 1000000)"
+    hash="$(node -e 'const v=JSON.parse(process.argv[1]); if(!/^0x[0-9a-f]{64}$/i.test(v.transactionHash||""))process.exit(1); process.stdout.write(v.transactionHash)' "$response")" || die "$label did not return a transaction hash"
+    receipt="$($CAST receipt --json "$hash" --rpc-url "$RPC_URL")"
+    node -e 'const v=JSON.parse(process.argv[1]); if(v.status!=="0x1")process.exit(1); console.log(JSON.stringify({label:process.argv[2],transactionHash:process.argv[3],gasUsed:v.gasUsed}))' "$receipt" "$label" "$hash" >>"$RECEIPTS" || die "$label transaction reverted"
+}
+OWNER="$($CAST wallet address --private-key "$PRIVATE_KEY")"
+# The CLI generates fresh random identities; their owner-only files stay in the
+# temporary directory and are deleted by the trap.  Only commitments/proof
+# outcomes, never identity secrets, reach the evidence output.
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/one.json" >"$TMP_DIR/one-result.json"
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/two.json" >"$TMP_DIR/two-result.json"
+ONE="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/one-result.json")"
+TWO="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/two-result.json")"
+send_checked add-member-one "$REGISTRY" 'addMember(uint256)' "$ONE"
+send_checked add-member-two "$REGISTRY" 'addMember(uint256)' "$TWO"
+COUNT="$($CAST call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL")"
+ROOT="$($CAST call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL")"
+[[ ${COUNT%% *} -ge 2 && ${ROOT%% *} != 0 ]] || die 'fresh group state is invalid'
+GROUP_ID="$($CAST call "$REGISTRY" 'groupId()(uint256)' --rpc-url "$RPC_URL")"
+printf '{"members":["%s","%s"]}\n' "$ONE" "$TWO" >"$TMP_DIR/group.json"
+node clients/anonset/anonset-cli.mjs proof generate "$TMP_DIR/one.json" "$TMP_DIR/group.json" 0 "${GROUP_ID%% *}" >"$TMP_DIR/proof.json"
+mapfile -t PROOF < <(node - "$TMP_DIR/proof.json" <<'NODE'
+const p=JSON.parse(require('fs').readFileSync(process.argv[2])); console.log([p.merkleTreeDepth,p.merkleTreeRoot,p.nullifier,p.message,`[${p.points.join(',')}]`].join('\n'));
+NODE
+)
+for attempt in 1 2; do send_checked "verify-membership-$attempt" "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}"; done
+send_checked validate-membership "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}"
+if "$CAST" call "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}" --rpc-url "$RPC_URL" >/dev/null 2>&1; then die 'replayed protected proof unexpectedly succeeded'; fi
+if "$CAST" call "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" 1 "${PROOF[4]}" --rpc-url "$RPC_URL" >/dev/null 2>&1; then die 'tampered proof unexpectedly succeeded'; fi
+SIBLINGS="$(node --input-type=module - "$TMP_DIR/group.json" <<'NODE'
+import { readFileSync } from "node:fs";
+import { Group } from "@semaphore-protocol/group";
+const group=new Group(JSON.parse(readFileSync(process.argv[2],"utf8")).members.map(BigInt)); console.log(`[${group.generateMerkleProof(0).siblings.map(String).join(",")}]`);
+NODE
+)"
+send_checked remove-member "$REGISTRY" 'removeMember(uint256,uint256[])' "$ONE" "$SIBLINGS"
+COUNT_AFTER="$($CAST call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL")"
+ROOT_AFTER="$($CAST call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL")"
+[[ ${COUNT_AFTER%% *} -lt ${COUNT%% *} && ${ROOT_AFTER%% *} != "${ROOT%% *}" ]] || die 'member removal did not change group state'
+node - "$OUTPUT" "$REGISTRY" "$OWNER" "$COUNT" "$ROOT" "$COUNT_AFTER" "$ROOT_AFTER" "$RECEIPTS" <<'NODE'
+const [output,registry,owner,count,root,countAfter,rootAfter,receiptsPath]=process.argv.slice(2);
+const transactions=require('fs').readFileSync(receiptsPath,'utf8').trim().split('\n').map(JSON.parse);
+if(transactions.length!==6) throw new Error('missing state-changing receipts');
+require('fs').writeFileSync(output,JSON.stringify({schema:1,registry,owner,count,root,countAfter,rootAfter,transactions,verifyReusable:true,validateReplayRejected:true,tamperedRejected:true,memberRemoval:true}));
+NODE

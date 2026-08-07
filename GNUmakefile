@@ -68,7 +68,7 @@ test-client:
 test-build:
 	node --test test/*.test.mjs
 	./test/toolchain-installer.test.sh
-	shellcheck scripts/build-solc scripts/e2e-smoke scripts/install-deps scripts/install-swissledger-toolchain scripts/keygen test/e2e-smoke.test.sh test/toolchain-installer.test.sh
+	shellcheck scripts/build-solc scripts/e2e-smoke scripts/install-deps scripts/install-swissledger-toolchain scripts/keygen scripts/testnet-deploy scripts/testnet-zk-smoke test/e2e-smoke.test.sh test/toolchain-installer.test.sh
 
 test-smoke: assert-toolchain generate-build-info
 	./scripts/e2e-smoke

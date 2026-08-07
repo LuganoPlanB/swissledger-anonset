@@ -1,98 +1,96 @@
 name: test
 
 on:
-  push:
-    branches: [main, master]
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anonset-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  unit:
+  local-gates:
+    name: local quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@1e60f620b9541d4e35e7080e59e86e5b3fcae5a4 # v4.0.4
         with: { node-version: 24, cache: npm }
-      # Source action reviewed at 7ac07c5731c9a768edcab2b8506047e4d9dc587c;
-      # install explicit v1.11.0 assets with repository-pinned checksums.
       - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
       - name: Complete local quality gate
         run: make test
 
-  smoke:
-    needs: unit
+  testnet:
+    name: fresh testnet deployment and ZK smoke
+    needs: local-gates
+    # Secrets and the protected environment are reachable only from protected
+    # main code or a repository-dispatched run, never from a pull request.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: swissledger-testnet
+    permissions:
+      contents: read
+    concurrency:
+      group: swissledger-testnet-deployer-222
+      cancel-in-progress: false
     env:
-      RPC_URL: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
-      PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
-      CHAIN_ID: 222
+      SWISSLEDGER_TESTNET_ADDRESS: ${{ secrets.SWISSLEDGER_TESTNET_ADDRESS }}
+      SWISSLEDGER_TESTNET_DEPLOY: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+      SWISSLEDGER_TESTNET_CHAIN_ID: '222'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@1e60f620b9541d4e35e7080e59e86e5b3fcae5a4 # v4.0.4
         with: { node-version: 24, cache: npm }
       - run: ./scripts/install-swissledger-toolchain
       - run: npm ci
       - run: node scripts/generate-build-info.mjs
-      - run: bin/swissledger-forge build
-
-      - name: Check secrets
+      - name: Normalize mandatory JSON-RPC params
         run: |
-          if [ -z "$RPC_URL" ] || [ -z "$PRIVATE_KEY" ]; then
-            echo "SKIP: testnet secrets not configured"
-            exit 0
-          fi
-
-      - name: Deploy SemaphoreVerifier
+          python3 scripts/rpc-proxy.py --target "$SWISSLEDGER_TESTNET_ADDRESS" > rpc-proxy.log 2>&1 &
+          echo 'SWISSLEDGER_TESTNET_ADDRESS=http://127.0.0.1:8545' >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do bin/swissledger-cast chain-id --rpc-url http://127.0.0.1:8545 && exit 0; sleep 1; done
+          echo 'RPC params proxy did not become ready' >&2
+          exit 1
+      - name: Deploy a fresh stack
+        run: ./scripts/testnet-deploy artifacts/testnet/deployment.json
+      - name: Exercise proof semantics
+        run: ./scripts/testnet-zk-smoke artifacts/testnet/deployment.json artifacts/testnet/smoke.json
+      - name: Assemble secret-free evidence
         run: |
-          bin/swissledger-forge create node_modules/@semaphore-protocol/contracts/base/SemaphoreVerifier.sol:SemaphoreVerifier \
-            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
-            --legacy --gas-price 0 --chain "$CHAIN_ID" \
-            --broadcast --json > verifier.json
-          echo "verifier=$(jq -r .deployedTo verifier.json)" >> "$GITHUB_OUTPUT"
-        id: deploy-verifier
+          make dependency-evidence
+          node scripts/testnet-evidence.mjs artifacts/testnet/deployment.json artifacts/testnet/smoke.json artifacts/testnet/evidence
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: anonset-testnet-${{ github.sha }}
+          path: artifacts/testnet/evidence
+          if-no-files-found: error
+          retention-days: 90
 
-      - name: Deploy Semaphore
+  validate-testnet-evidence:
+    needs: testnet
+    if: needs.testnet.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: anonset-testnet-${{ github.sha }}
+          path: downloaded-evidence
+      - name: Validate downloaded evidence is self-consistent and secret-free
         run: |
-          bin/swissledger-forge create node_modules/@semaphore-protocol/contracts/Semaphore.sol:Semaphore \
-            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
-            --legacy --gas-price 0 --chain "$CHAIN_ID" \
-            --broadcast --json \
-            --constructor-args "${{ steps.deploy-verifier.outputs.verifier }}" \
-            > semaphore.json
-          echo "semaphore=$(jq -r .deployedTo semaphore.json)" >> "$GITHUB_OUTPUT"
-        id: deploy-semaphore
-
-      - name: Deploy MerkleRootRegistryZK
-        run: |
-          bin/swissledger-forge create src/MerkleRootRegistryZK.sol:MerkleRootRegistryZK \
-            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
-            --legacy --gas-price 0 --chain "$CHAIN_ID" \
-            --broadcast --json \
-            --constructor-args "${{ steps.deploy-semaphore.outputs.semaphore }}" \
-            > registry.json
-          echo "registry=$(jq -r .deployedTo registry.json)" >> "$GITHUB_OUTPUT"
-        id: deploy-registry
-
-      - name: Smoke — add member and query state
-        run: |
-          if [ -z "$RPC_URL" ]; then echo "SKIP: no RPC"; exit 0; fi
-          REGISTRY="${{ steps.deploy-registry.outputs.registry }}"
-
-          COMMITMENT=11005642493773047649202648265396872197147567800455247120861783398111750817516
-          bin/swissledger-cast send "$REGISTRY" "addMember(uint256)" "$COMMITMENT" \
-            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" \
-            --legacy --gas-price 0 --chain "$CHAIN_ID"
-
-          COUNT=$(bin/swissledger-cast call "$REGISTRY" "memberCount()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
-          ROOT=$(bin/swissledger-cast call "$REGISTRY" "activeRoot()(uint256)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
-          VERSION=$(bin/swissledger-cast call "$REGISTRY" "version()(string)" --rpc-url "$RPC_URL" --chain "$CHAIN_ID")
-
-          echo "members:  $COUNT"
-          echo "root:     $ROOT"
-          echo "version:  $VERSION"
-
-          test "$COUNT" != "0" || { echo "FAIL: empty group after addMember"; exit 1; }
-          test "$ROOT"  != "0" || { echo "FAIL: zero root after addMember"; exit 1; }
-          test -n "$VERSION"   || { echo "FAIL: no version string"; exit 1; }
-
-          echo "PASS: on-chain smoke test"
+          node -e 'const fs=require("fs"),c=require("crypto");const d="downloaded-evidence",m=JSON.parse(fs.readFileSync(`${d}/manifest.json`));if(m.schema!==1||m.chainId!==222||!Array.isArray(m.contracts)||m.contracts.length!==3)throw Error("invalid manifest schema");for(const x of m.contracts){const a=JSON.parse(fs.readFileSync(`${d}/${x.name}.json`));if(c.createHash("sha256").update(JSON.stringify(a.abi)).digest("hex")!==x.abiSha256||c.createHash("sha256").update(a.bytecode.object).digest("hex")!==x.bytecodeSha256)throw Error("artifact hash mismatch");}'
+          ! grep -RIE '(private.?key|mnemonic|github_token|x-access-token|https?://[^/@]+:[^/@]+@)' downloaded-evidence
