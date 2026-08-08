@@ -7,6 +7,23 @@ It does not grant production authority. A canonical chain-110 deployment
 requires the external Solidity/ZK audit and hardware-backed multisig governance
 listed in [DEPLOYMENT.md](DEPLOYMENT.md).
 
+## Group rotation recovery
+
+`group rotate` deploys a new registry and group ID; it never resets or mutates
+the source registry. Freeze source membership, retain the 0600 journal, and
+rerun the identical command after interruption. Confirmed deployment/batches
+resume idempotently; a changed source root aborts the candidate and requires a
+fresh checkpoint. Application cutover and old-group rejection are explicit
+operator actions. Receipt gas is observational evidence, not a timing promise.
+When a distinct `--target-owner` is used, the CLI intentionally stops at
+`AWAITING_OWNER_ACCEPTANCE`: the governance target must separately submit
+`acceptOwnership()` from that address. Do not treat the candidate as READY or
+cut applications over until that receipt and the owner/manager postconditions
+are independently verified.
+Run `make test-rotation` for the deterministic local 65-member, two-batch
+scenario; use its receipt gas and journal evidence for capacity/churn planning,
+not a calendar or linear-cost promise.
+
 ## Roles, access, and routine controls
 
 | Role | Least privilege | Routine evidence |

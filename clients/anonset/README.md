@@ -43,6 +43,25 @@ A stale/unavailable anchor safely falls back to complete history. The response
 always contains a secret-free `checkpoint` descriptor; without this option it
 reports `mode: "unpersisted"`. `--confirmations <n>` selects `head - n`.
 
+## Group rotation
+
+Rotation is an operational migration, never an in-place prune or reset. It
+deploys a new registry on the source Semaphore, copies active commitments in
+leaf order, and creates a new group ID. Freeze source membership during the
+migration and explicitly cut applications over to the new scope.
+
+```sh
+printf '%s\n' "$ROTATION_KEY" | npm run anonset -- group rotate "$SOURCE" "$RPC_URL" 110 \
+  --checkpoint source.checkpoint.json --journal rotation.journal.json \
+  --expected-signer "$DEPLOYER" --target-owner "$GOVERNANCE" --batch-size 64
+```
+
+The key is accepted only from bounded stdin. The 0600 journal is non-secret
+audit state: rerun the exact command to resume confirmed work. Source drift
+aborts that candidate and requires a fresh checkpoint. A distinct target owner
+returns `AWAITING_OWNER_ACCEPTANCE` until it accepts; managers are supplied
+explicitly and are never silently copied from the source.
+
 Both proof-generation commands default to a budget of 65,536 insertion slots.
 An insertion slot is retained after a member removal, so it differs from the
 number of active members. Use `--max-insertion-slots <n>` to choose a positive

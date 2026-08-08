@@ -161,6 +161,54 @@ node - "$TMP_DIR/reorg-rebuild-proof.json" <<'NODE'
 const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
 if (p.checkpoint?.mode !== "rebuilt-after-reorg" || p.chain?.activeMembers !== 2 || p.chain?.eventCount <= 1) throw new Error("reorg checkpoint was not safely rebuilt");
 NODE
+if [[ ${ANONSET_ROTATION_SCENARIO:-0} == 1 ]]; then
+# Rotation compacts the verified active set into a new group.  Add 63 harmless
+# public field values so the migration crosses the 64-member batch boundary.
+EXTRA_MEMBERS="[$(seq -s, 1000 1062)]"
+send_checked rotation-source-batch "$REGISTRY" 'addMembers(uint256[])' "$EXTRA_MEMBERS" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 5000000
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" >"$TMP_DIR/rotation-source-proof.json"
+if printf '%s\n' "$KEY" | ANONSET_ROTATION_FAIL_AFTER_DEPLOY=1 node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 \
+    --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation.journal.json" \
+    --expected-signer "$OWNER" --batch-size 64 >"$TMP_DIR/rotation-interrupted.json" 2>/dev/null; then die "post-deploy injection unexpectedly succeeded"; fi
+printf '%s\n' "$KEY" | node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 \
+    --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation.journal.json" \
+    --expected-signer "$OWNER" --batch-size 64 >"$TMP_DIR/rotation.json"
+node - "$TMP_DIR/rotation.json" "$REGISTRY" "$TMP_DIR/rotation.journal.json" <<'NODE'
+const [rotationPath, source, journalPath] = process.argv.slice(2);
+const rotation = JSON.parse(require("fs").readFileSync(rotationPath, "utf8"));
+const journal = JSON.parse(require("fs").readFileSync(journalPath, "utf8"));
+if (rotation.status !== "READY" || rotation.sourceRegistry.toLowerCase() !== source.toLowerCase() ||
+    rotation.newRegistry.toLowerCase() === source.toLowerCase() || rotation.activeMembers < 65 ||
+    !/^[0-9]+$/.test(rotation.newGroupId) || journal.nextActiveIndex !== rotation.activeMembers ||
+    journal.transactions.filter((tx) => tx.kind === "deploy").length !== 1 || journal.transactions.filter((tx) => tx.kind === "batch").length !== 2 ||
+    !Number.isFinite(rotation.benchmark?.observedDurationMs) || rotation.benchmark.observedDurationMs < 0 || !rotation.transactions.every((tx) => Number.isFinite(tx.observedDurationMs) && tx.observedDurationMs >= 0) || !rotation.benchmark.batches?.every((batch) => /^[0-9]+$/.test(batch.gasUsed) && Number.isFinite(batch.observedDurationMs) && batch.observedDurationMs >= 0) || (require("fs").statSync(journalPath).mode & 0o777) !== 0o600 || /privateKey|identity|groupExport/i.test(JSON.stringify(rotation)) || /privateKey|groupExport/i.test(JSON.stringify(journal))) throw new Error("invalid or unsafe >64-member rotation evidence");
+NODE
+if printf '%s\n' "$KEY" | ANONSET_ROTATION_FAIL_AFTER_BATCH=1 node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 \
+    --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation-batch.journal.json" \
+    --expected-signer "$OWNER" --batch-size 64 >"$TMP_DIR/rotation-batch-interrupted.json" 2>/dev/null; then die "post-batch injection unexpectedly succeeded"; fi
+printf '%s\n' "$KEY" | node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 \
+    --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation-batch.journal.json" \
+    --expected-signer "$OWNER" --batch-size 64 >"$TMP_DIR/rotation-batch.json"
+node - "$TMP_DIR/rotation-batch.journal.json" <<'NODE'
+const journal = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+if (journal.status !== "READY" || journal.transactions.filter((tx) => tx.kind === "deploy").length !== 1 || journal.transactions.filter((tx) => tx.kind === "batch").length !== 2 || /privateKey|groupExport/i.test(JSON.stringify(journal))) throw new Error("post-batch resume duplicated work or leaked a secret");
+NODE
+TARGET_OWNER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+if printf '%s\n' "$KEY" | ANONSET_ROTATION_FAIL_AFTER_TRANSFER=1 node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation-owner.journal.json" --expected-signer "$OWNER" --target-owner "$TARGET_OWNER" --manager "$TARGET_OWNER" --batch-size 64 >/dev/null 2>&1; then die "post-transfer injection unexpectedly succeeded"; fi
+printf '%s\n' "$KEY" | node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation-owner.journal.json" --expected-signer "$OWNER" --target-owner "$TARGET_OWNER" --manager "$TARGET_OWNER" --batch-size 64 >"$TMP_DIR/rotation-owner.json"
+node - "$TMP_DIR/rotation-owner.json" "$TMP_DIR/rotation-owner.journal.json" "$TARGET_OWNER" <<'NODE'
+const [resultPath,journalPath,target]=process.argv.slice(2); const result=JSON.parse(require("fs").readFileSync(resultPath)); const journal=JSON.parse(require("fs").readFileSync(journalPath)); if(result.status!=="AWAITING_OWNER_ACCEPTANCE"||!journal.ownershipTransferInitiated||journal.transactions.filter(x=>x.kind==="transferOwnership").length!==1||journal.transactions.filter(x=>x.kind==="manager").length!==1) throw new Error("ownership resume duplicated or claimed readiness");
+NODE
+send_checked rotation-source-drift "$REGISTRY" 'addMember(uint256)' 999999 --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+if printf '%s\n' "$KEY" | node clients/anonset/anonset-cli.mjs group rotate "$REGISTRY" "$RPC_URL" 31337 \
+    --checkpoint "$TMP_DIR/rotation-source.checkpoint.json" --journal "$TMP_DIR/rotation-batch.journal.json" \
+    --expected-signer "$OWNER" --batch-size 64 >/dev/null 2>&1; then die "source drift unexpectedly resumed rotation"; fi
+node - "$TMP_DIR/rotation-batch.journal.json" <<'NODE'
+const journal = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+if (journal.status !== "ABORTED_SOURCE_CHANGED") throw new Error("source drift was not persisted as terminal journal state");
+NODE
+fi
 node --input-type=module - "$MANIFEST" "$TMP_DIR/deployment-evidence.json" "$RECEIPTS" "$REGISTRY" "$GROUP_ID" "$TMP_DIR/proof.json" "$TMP_DIR/post-remove-proof.json" <<'NODE'
 import { readFileSync } from "node:fs";
 const [manifestPath, deploymentEvidencePath, receiptsPath, registry, groupId, proofPath, postRemoveProofPath] = process.argv.slice(2);
@@ -168,7 +216,8 @@ function deployment(value) { if (typeof value === "string") { try { return deplo
 const manifest = deployment(JSON.parse(readFileSync(manifestPath, "utf8")));
 if (manifest.registry.toLowerCase() !== registry.toLowerCase() || !/^[0-9]+$/.test(groupId)) throw new Error("manifest wiring mismatch");
 const receipts = readFileSync(receiptsPath, "utf8").trim().split("\n").map(JSON.parse).filter(({ label }) => label !== "orphan-branch-add" && label !== "divergent-branch-add");
-if (receipts.length !== 6 || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("incomplete state-changing receipt manifest");
+const expected = process.env.ANONSET_ROTATION_SCENARIO === "1" ? 8 : 6;
+if (receipts.length !== expected || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("incomplete state-changing receipt manifest");
 const summarize = (proofPath) => { const { chain, checkpoint, metrics, gasEstimates } = JSON.parse(readFileSync(proofPath, "utf8")); return { chain, checkpoint, metrics, gasEstimates }; };
 console.log(JSON.stringify({ deployment: manifest, deploymentEvidence: JSON.parse(readFileSync(deploymentEvidencePath, "utf8")), transactions: receipts, chainProof: summarize(proofPath), postRemovalChainProof: summarize(postRemoveProofPath) }));
 NODE

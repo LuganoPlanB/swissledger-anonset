@@ -20,6 +20,7 @@ import { Contract, Interface, getAddress, isAddress, JsonRpcProvider, toBeHex, z
 import { performance } from "node:perf_hooks";
 import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS, MAX_TREE_DEPTH } from "./insertion-policy.mjs";
 import { CHECKPOINT_SCHEMA, createCheckpoint, readCheckpointFile, writeCheckpointFile } from "./checkpoint.mjs";
+import { parseRotationArguments, rotateGroup } from "./rotation.mjs";
 
 const MAX_JSON_BYTES = 1024 * 1024;
 export { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS } from "./insertion-policy.mjs";
@@ -499,7 +500,7 @@ async function cmdVerifyOnChain(contractAddress, proofPath, rpcUrl, chainId) {
     } catch { fail("on-chain proof verification failed", EXIT_RPC); } finally { provider.destroy(); }
 }
 
-const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
+const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>] | group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--max-insertion-slots <n>] [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>] [--confirmations <n>] [--gas-price <n>] [--deploy-gas-limit <n>] [--batch-gas-limit <n>] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
 
 function parseProofPositionals(arguments_, minimum, maximum, allowChainOptions = false) {
     const positional = [];
@@ -556,6 +557,11 @@ async function run(args) {
     if (command === "proof" && subcommand === "generate-chain") {
         const { positional, maxInsertionSlots, checkpointPath, confirmations } = parseProofPositionals(rest, 4, 6, true);
         return cmdProofGenerateChain(positional[0], positional[1], positional[2], positional[3], positional[4], positional[5], maxInsertionSlots, checkpointPath, confirmations);
+    }
+    if (command === "group" && subcommand === "rotate") {
+        const options = parseRotationArguments(rest, (message) => fail(message));
+        try { return output(await rotateGroup(options, (message) => fail(message, EXIT_RPC))); }
+        catch (error) { if (error instanceof CliError) throw error; fail(`rotation failed: ${String(error?.message ?? "unknown error").replace(/0x[0-9a-f]{64}/ig, "[redacted]")}`, EXIT_RPC); }
     }
     if (command === "verify" && subcommand === "local" && rest.length === 1) return cmdVerifyLocal(rest[0]);
     if (command === "verify" && subcommand === "on-chain" && rest.length === 4) return cmdVerifyOnChain(...rest);
