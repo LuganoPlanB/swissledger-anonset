@@ -3,7 +3,7 @@ FORGE := $(BIN_DIR)/swissledger-forge
 CAST := $(BIN_DIR)/swissledger-cast
 ANVIL := $(BIN_DIR)/swissledger-anvil
 
-.PHONY: help setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-all test ci
+.PHONY: help setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-rotation test-all test ci
 
 help:
 	@printf '%s\n' 'Swissledger AnonSet targets:' \
@@ -88,7 +88,10 @@ test-smoke: assert-toolchain generate-build-info
 test-smoke-isolation: assert-toolchain generate-build-info
 	./test/e2e-smoke.test.sh
 
-test-all: check-build-info format dependency-integrity build artifact-compatibility reproducible-build test-build test-client test-solidity solidity-analysis coverage test-smoke test-smoke-isolation
+test-rotation: assert-toolchain generate-build-info
+	timeout 120 env ANONSET_ROTATION_SCENARIO=1 ./scripts/e2e-smoke
+
+test-all: check-build-info format dependency-integrity build artifact-compatibility reproducible-build test-build test-client test-solidity solidity-analysis coverage test-smoke test-smoke-isolation test-rotation
 
 test: test-all
 

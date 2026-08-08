@@ -107,6 +107,7 @@ updating documented numbers.
 npm run anonset -- identity create identity.json
 npm run anonset -- proof generate identity.json group.json 0 <group-id>
 npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> 0 [from-block] [--checkpoint <file>] [--confirmations <n>]
+npm run anonset -- group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>]
 npm run anonset -- verify local proof.json
 npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
 ```
