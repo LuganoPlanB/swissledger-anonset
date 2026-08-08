@@ -10,13 +10,22 @@ test("maintainer documentation points to current commands and paths", () => {
     const readme = text("README.md");
     const agents = text("AGENTS.md");
     const deployment = text("docs/DEPLOYMENT.md");
-    for (const path of ["README.md", "AGENTS.md", "GNUmakefile", "clients/anonset/README.md", "docs/DEPLOYMENT.md", "docs/OPERATIONS.md", "docs/READINESS.md"]) {
+    for (const path of ["README.md", "USAGE.md", "AGENTS.md", "GNUmakefile", "clients/anonset/README.md", "docs/DEPLOYMENT.md", "docs/OPERATIONS.md", "docs/READINESS.md"]) {
         assert.ok(existsSync(new URL(path, root)), `missing documented path: ${path}`);
     }
     assert.match(readme, /SwissLedger Foundry v1\.11\.0/);
     assert.match(readme, /SwissLedger testnet \| `222`/);
     assert.match(readme, /SwissLedger production \| `110`/);
     assert.match(readme, /validateMembership/);
+    assert.match(readme, /96\.04%/);
+    assert.match(readme, /10,689,124/);
+    assert.match(readme, /36\.279 s/);
+    const usage = text("USAGE.md");
+    assert.match(usage, /LLM usage contract/);
+    assert.match(usage, /make test/);
+    assert.match(usage, /PoseidonT6` is not interchangeable/);
+    assert.match(usage, /Chain `110` has no automated/);
+    assert.match(usage, /Timings are observations, not SLAs/);
     assert.doesNotMatch(agents, /clients\/merklezk/);
     assert.match(agents, /Node client intentionally uses `ethers`/);
     assert.match(agents, /do not add Hardhat or Truffle/);
@@ -35,7 +44,7 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(deployment, /wall-clock observations/);
     assert.match(readme, /same-repository PR whose base is `main`/);
     assert.match(readme, /fork PRs remain secret-free/);
-    assert.match(readme, /PR validation creates fresh\s+testnet evidence only; it never starts a release/);
+    assert.match(readme, /PR\s+validation creates fresh\s+testnet evidence only; it never starts a release/);
     assert.match(readme, /SWISSLEDGER_TESTNET_RPC/);
     assert.match(readme, /organization secret `SWISSLEDGER_TESTNET_DEPLOY`/);
 });

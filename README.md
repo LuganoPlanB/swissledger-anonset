@@ -32,6 +32,68 @@ protocol smoke. Run `make help` for focused targets. The build is pinned to
 Solc 0.8.30 and `evm_version = "istanbul"`; do not substitute stock Foundry
 or London-era settings.
 
+Agents and automated maintainers should also read [USAGE.md](USAGE.md) and
+[AGENTS.md](AGENTS.md) before changing the repository.
+
+## Verified readiness snapshot
+
+As of 8 August 2026, source commit `f0258ce` passed the complete local gate and
+protected PR workflow
+[31228455338](https://github.com/LuganoPlanB/swissledger-anonset/actions/runs/31228455338).
+GitHub tested merge commit `e6b25df317d1f3f54ad05bcdd09135790c64d2e1`:
+the local quality gate, a fresh chain-222 deployment and real ZK smoke, artifact
+upload, and independent downloaded-evidence validation all succeeded. The
+evidence retained the upstream RPC hostname and four-contract linked stack.
+
+This establishes local and testnet release readiness. It is not approval for a
+canonical chain-110 deployment: the external Solidity/ZK audit, production
+multisig/key governance, and manual promotion approval remain required.
+
+### Test and coverage measurements
+
+The verified gate includes 23 repository Node tests, 6 hardened CLI tests,
+4 real Groth16 proof-integration tests, 42 Solidity tests, two 256-run Solidity
+fuzz tests, ShellCheck, dependency and artifact-integrity gates, and repeated
+and parallel local smoke tests with injected-failure cleanup. Production
+`npm audit` reported zero findings.
+
+| Solidity coverage scope | Lines | Statements | Branches | Functions |
+|---|---:|---:|---:|---:|
+| `MerkleRootRegistryZK.sol` | 96.04% | 95.51% | 86.67% | 95.45% |
+| Vendored `PoseidonT3.sol` | 100.00% | 100.00% | n/a | 100.00% |
+| Complete Forge coverage report | 96.52% | 95.62% | 81.25% | 93.10% |
+
+The deployment script is verified through real local and protected testnet
+flows rather than Solidity source coverage. Coverage is a regression guard,
+not a claim that every possible state or provider failure has been enumerated.
+
+### Protected testnet benchmark
+
+These measurements come from the same protected workflow and chain-222 RPC
+path. Gas is deterministic for the recorded transaction inputs; durations are
+runner, network, and provider observations useful for regression comparison,
+not latency service-level guarantees.
+
+| Operation | Gas used | Observed duration |
+|---|---:|---:|
+| Deploy PoseidonT3 | 3,694,045 | 6.711 s |
+| Deploy SemaphoreVerifier | 3,720,276 | 4.243 s |
+| Deploy Semaphore | 1,827,122 | 4.991 s |
+| Deploy MerkleRootRegistryZK | 1,447,681 | 3.773 s |
+| Add first member | 117,292 | 4.409 s |
+| Add second member | 154,650 | 4.844 s |
+| Reusable verification #1 | 259,106 | 6.776 s |
+| Reusable verification #2 | 259,106 | 5.726 s |
+| Replay-protected validation | 286,515 | 3.134 s |
+| Remove member | 114,142 | 4.255 s |
+
+Aggregate deployment gas was **10,689,124**, protocol-transaction gas was
+**1,190,811**, and combined gas was **11,879,935**. Identity setup took
+**0.446 s**, proof generation **1.084 s**, and the complete semantic smoke
+**36.279 s**. The downloadable manifest is the authoritative record and also
+contains receipt/block identities, per-operation measurements, runtime-code
+hashes, ABI/bytecode hashes, dependency evidence, and semantic outcomes.
+
 ## Proof semantics and administration
 
 `verifyMembership` is a reusable membership check. It verifies a Semaphore
@@ -66,8 +128,8 @@ organization variable `SWISSLEDGER_TESTNET_RPC` (credential-free RPC URL),
 organization variable `SWISSLEDGER_TESTNET_ADDRESS` (expected public deployer
 address), and organization secret `SWISSLEDGER_TESTNET_DEPLOY` (deployer key).
 The scripts derive the key address and reject a mismatch. Never put the key or
-RPC credentials in files, command lines, artifacts, issue text, or logs. PR validation creates fresh
-testnet evidence only; it never starts a release.
+RPC credentials in files, command lines, artifacts, issue text, or logs. PR
+validation creates fresh testnet evidence only; it never starts a release.
 
 Each successful trusted run uploads `anonset-testnet-<commit>` for 90 days. It
 contains a secret-scanned manifest, contract ABI/bytecode hashes, deployment

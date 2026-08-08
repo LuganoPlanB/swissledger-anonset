@@ -1,5 +1,8 @@
 # Swissledger AnonSet — Agent Reference
 
+Read `USAGE.md` for the current machine-oriented workflow, invariants, evidence
+contract, and completion checklist. This file provides architectural context.
+
 ## Project Map
 
 | Area | Path | What |
@@ -48,14 +51,15 @@ This means:
 
 ### Deployed contract addresses
 
-Each fresh protected CI testnet deployment records these three addresses in its
+Each fresh protected CI testnet deployment records these four addresses in its
 downloadable evidence manifest:
 
-| Contract | Variable |
+| Contract | Evidence manifest field |
 |---|---|
-| `MerkleRootRegistryZK` | `registryAddr` |
-| `Semaphore` | `semaphoreAddr` |
-| `SemaphoreVerifier` | `semaphoreVerifierAddr` |
+| `PoseidonT3` | `wiring.poseidon` |
+| `MerkleRootRegistryZK` | `wiring.registry` |
+| `Semaphore` | `wiring.semaphore` |
+| `SemaphoreVerifier` | `wiring.verifier` |
 
 ## SwissLedger networks
 
