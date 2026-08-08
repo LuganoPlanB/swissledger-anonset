@@ -18,8 +18,8 @@ npm run anonset -- --help
 
 ```text
 anonset-cli identity create <identity.json> [private-key-hex] [--force]
-anonset-cli proof generate <identity.json> <group.json> [message] [scope]
-anonset-cli proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block]
+anonset-cli proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>]
+anonset-cli proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>]
 anonset-cli verify local <proof.json>
 anonset-cli verify on-chain <address> <proof.json> <rpc-url> <chain-id>
 ```
@@ -36,6 +36,14 @@ canonically replays the group's public events, and refuses to prove unless the
 reconstructed root, depth, and size match the same block's on-chain state. An
 explicit trusted `from-block` avoids historical bytecode discovery when the RPC
 does not expose archive state.
+
+Both proof-generation commands default to a budget of 65,536 insertion slots.
+An insertion slot is retained after a member removal, so it differs from the
+number of active members. Use `--max-insertion-slots <n>` to choose a positive
+safe integer up to 4,294,967,296 (the depth-32 protocol ceiling). The option
+may follow the required positional arguments; duplicate or unknown options are
+rejected before files are read or RPC access begins. Ordinary JSON inputs remain
+limited to 1 MiB.
 
 ## Safe workflow
 
@@ -91,7 +99,7 @@ successful reusable check as replay protection.
 - Automatic deployment discovery needs historical `eth_getCode`. If the RPC
   prunes historical state, pass the trusted registry deployment block as the
   final `generate-chain` argument. Event history is still required.
-- `generate-chain` intentionally limits reconstruction to 1,024 insertion
-  slots. Use a verified indexer snapshot for larger groups.
+- `generate-chain` defaults to 65,536 insertion slots. Choose a lower explicit
+  budget when client memory must be constrained.
 - A replay failure after `validateMembership` is expected for an already-used
   nullifier, not a failed reusable check.

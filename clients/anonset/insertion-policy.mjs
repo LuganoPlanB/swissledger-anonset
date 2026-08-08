@@ -1,0 +1,3 @@
+export const MAX_TREE_DEPTH = 32;
+export const DEFAULT_MAX_INSERTION_SLOTS = 65_536;
+export const MAX_INSERTION_SLOTS = 2 ** MAX_TREE_DEPTH;

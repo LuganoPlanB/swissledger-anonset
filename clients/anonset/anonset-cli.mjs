@@ -12,15 +12,16 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Identity } from "@semaphore-protocol/identity";
 import { Group } from "@semaphore-protocol/group";
 import { generateProof, verifyProof } from "./proof-runtime.mjs";
 import { Contract, Interface, isAddress, JsonRpcProvider, toBeHex, zeroPadValue } from "ethers";
 import { performance } from "node:perf_hooks";
+import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS, MAX_TREE_DEPTH } from "./insertion-policy.mjs";
 
 const MAX_JSON_BYTES = 1024 * 1024;
-const MAX_GROUP_MEMBERS = 1024;
-const MAX_TREE_DEPTH = 32;
+export { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS } from "./insertion-policy.mjs";
 const MAX_STDIN_SECRET_BYTES = 128;
 const LOG_BLOCK_SPAN = 50_000;
 const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -107,11 +108,21 @@ function identityFromSource(source) {
     return source === "-" ? identityFromStdin() : identityFromFile(source);
 }
 
-function groupFromFile(filePath) {
+export function parseInsertionSlotBudget(value) {
+    if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) {
+        fail("max insertion slots must be a positive safe integer");
+    }
+    const budget = Number(value);
+    if (!Number.isSafeInteger(budget)) fail("max insertion slots must be a positive safe integer");
+    if (budget > MAX_INSERTION_SLOTS) fail(`max insertion slots cannot exceed ${MAX_INSERTION_SLOTS} for depth ${MAX_TREE_DEPTH}`);
+    return budget;
+}
+
+function groupFromFile(filePath, maxInsertionSlots) {
     const data = readJsonFile(filePath, "group");
     const members = Array.isArray(data) ? data : requireObject(data, "group").members;
-    if (!Array.isArray(members) || members.length === 0 || members.length > MAX_GROUP_MEMBERS) {
-        fail(`group.members must contain 1-${MAX_GROUP_MEMBERS} members`);
+    if (!Array.isArray(members) || members.length === 0 || members.length > maxInsertionSlots) {
+        fail(`group.members must contain 1-${maxInsertionSlots} insertion slots`);
     }
     return new Group(members.map((member, index) => field(member, `group.members[${index}]`)));
 }
@@ -204,7 +215,7 @@ async function discoverDeploymentBlock(provider, address, latestBlock) {
     return low;
 }
 
-const SEMAPHORE_EVENTS = new Interface([
+export const SEMAPHORE_EVENTS = new Interface([
     "event MemberAdded(uint256 indexed groupId,uint256 index,uint256 identityCommitment,uint256 merkleTreeRoot)",
     "event MembersAdded(uint256 indexed groupId,uint256 startIndex,uint256[] identityCommitments,uint256 merkleTreeRoot)",
     "event MemberUpdated(uint256 indexed groupId,uint256 index,uint256 identityCommitment,uint256 newIdentityCommitment,uint256 merkleTreeRoot)",
@@ -224,7 +235,7 @@ async function fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, to
     return logs.sort((left, right) => left.blockNumber - right.blockNumber || left.transactionIndex - right.transactionIndex || left.index - right.index);
 }
 
-function replayGroupLogs(logs) {
+export function replayGroupLogs(logs, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS, verifyEventRoots = true) {
     const group = new Group();
     let insertions = 0;
     for (const log of logs) {
@@ -236,12 +247,12 @@ function replayGroupLogs(logs) {
         try {
             if (parsed.name === "MemberAdded") {
                 if (index !== group.size) fail("Semaphore member event sequence is incomplete", EXIT_RPC);
-                if (insertions >= MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+                if (insertions >= maxInsertionSlots) fail(`reconstructed group exceeds ${maxInsertionSlots} insertion slots`, EXIT_FILE);
                 group.addMember(args.identityCommitment);
                 insertions += 1;
             } else if (parsed.name === "MembersAdded") {
                 if (index !== group.size) fail("Semaphore batch event sequence is incomplete", EXIT_RPC);
-                if (insertions + args.identityCommitments.length > MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+                if (insertions + args.identityCommitments.length > maxInsertionSlots) fail(`reconstructed group exceeds ${maxInsertionSlots} insertion slots`, EXIT_FILE);
                 group.addMembers([...args.identityCommitments]);
                 insertions += args.identityCommitments.length;
             } else if (parsed.name === "MemberUpdated") {
@@ -255,8 +266,8 @@ function replayGroupLogs(logs) {
             if (error instanceof CliError) throw error;
             fail("Semaphore event cannot be replayed", EXIT_RPC);
         }
-        if (group.root !== args.merkleTreeRoot) fail("Semaphore event root does not match reconstructed state", EXIT_RPC);
-        if (group.size > MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+        if (verifyEventRoots && group.root !== args.merkleTreeRoot) fail("Semaphore event root does not match reconstructed state", EXIT_RPC);
+        if (insertions > maxInsertionSlots) fail(`reconstructed group exceeds ${maxInsertionSlots} insertion slots`, EXIT_FILE);
     }
     return { group, insertions };
 }
@@ -282,16 +293,16 @@ async function cmdIdentityCreate(filePath, key, force) {
     output({ ok: true, commitment: identity.commitment.toString() });
 }
 
-async function cmdProofGenerate(identityPath, groupPath, message = "0", scope = "0") {
+async function cmdProofGenerate(identityPath, groupPath, message = "0", scope = "0", maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS) {
     const identity = identityFromFile(identityPath);
-    const group = groupFromFile(groupPath);
+    const group = groupFromFile(groupPath, maxInsertionSlots);
     field(message, "message");
     field(scope, "scope");
     const proof = await generateProof(identity, group, message, scope);
     output({ merkleTreeDepth: proof.merkleTreeDepth, merkleTreeRoot: proof.merkleTreeRoot, nullifier: proof.nullifier, message: proof.message, scope: proof.scope, points: proof.points });
 }
 
-async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, chainId, message = "0", suppliedFromBlock) {
+async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, chainId, message = "0", suppliedFromBlock, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS) {
     const totalStarted = performance.now();
     if (!isAddress(registryAddress)) fail("registry address is invalid");
     const expectedChainId = field(chainId, "chain ID");
@@ -329,7 +340,7 @@ async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, ch
         const logs = await fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, latestBlock);
         const eventFetchMs = elapsed(fetchStarted);
         const reconstructionStarted = performance.now();
-        const { group, insertions } = replayGroupLogs(logs);
+        const { group, insertions } = replayGroupLogs(logs, maxInsertionSlots);
         const semaphore = new Contract(semaphoreAddress, [
             "function getMerkleTreeRoot(uint256) view returns (uint256)",
             "function getMerkleTreeDepth(uint256) view returns (uint256)",
@@ -407,7 +418,29 @@ async function cmdVerifyOnChain(contractAddress, proofPath, rpcUrl, chainId) {
     } catch { fail("on-chain proof verification failed", EXIT_RPC); } finally { provider.destroy(); }
 }
 
-const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
+const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
+
+function parseProofPositionals(arguments_, minimum, maximum) {
+    const positional = [];
+    let maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS;
+    let sawBudget = false;
+    for (let index = 0; index < arguments_.length; index += 1) {
+        const argument = arguments_[index];
+        if (argument === "--max-insertion-slots") {
+            if (sawBudget) fail("max insertion slots option may only be supplied once");
+            sawBudget = true;
+            if (index + 1 === arguments_.length) fail("--max-insertion-slots requires a value");
+            maxInsertionSlots = parseInsertionSlotBudget(arguments_[index + 1]);
+            index += 1;
+        } else if (argument.startsWith("-") && argument !== "-") {
+            fail(`unknown option: ${argument}`);
+        } else {
+            positional.push(argument);
+        }
+    }
+    if (positional.length < minimum || positional.length > maximum) fail(USAGE);
+    return { positional, maxInsertionSlots };
+}
 
 async function run(args) {
     if (args.length === 0 || args[0] === "--help" || args[0] === "-h") { process.stdout.write(`${USAGE}\n`); return; }
@@ -418,16 +451,24 @@ async function run(args) {
         if (positional.length < 1 || positional.length > 2) fail("identity create requires <identity.json> [private-key-hex] [--force]");
         return cmdIdentityCreate(positional[0], positional[1], force);
     }
-    if (command === "proof" && subcommand === "generate" && rest.length >= 2 && rest.length <= 4) return cmdProofGenerate(...rest);
-    if (command === "proof" && subcommand === "generate-chain" && rest.length >= 4 && rest.length <= 6) return cmdProofGenerateChain(...rest);
+    if (command === "proof" && subcommand === "generate") {
+        const { positional, maxInsertionSlots } = parseProofPositionals(rest, 2, 4);
+        return cmdProofGenerate(positional[0], positional[1], positional[2], positional[3], maxInsertionSlots);
+    }
+    if (command === "proof" && subcommand === "generate-chain") {
+        const { positional, maxInsertionSlots } = parseProofPositionals(rest, 4, 6);
+        return cmdProofGenerateChain(positional[0], positional[1], positional[2], positional[3], positional[4], positional[5], maxInsertionSlots);
+    }
     if (command === "verify" && subcommand === "local" && rest.length === 1) return cmdVerifyLocal(rest[0]);
     if (command === "verify" && subcommand === "on-chain" && rest.length === 4) return cmdVerifyOnChain(...rest);
     fail(USAGE);
 }
 
-try {
-    await run(process.argv.slice(2));
-} catch (error) {
-    process.stderr.write(`${error instanceof CliError ? error.message : "operation failed"}\n`);
-    process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    try {
+        await run(process.argv.slice(2));
+    } catch (error) {
+        process.stderr.write(`${error instanceof CliError ? error.message : "operation failed"}\n`);
+        process.exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : 1;
+    }
 }

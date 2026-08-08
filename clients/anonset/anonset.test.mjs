@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Group } from "@semaphore-protocol/group";
 import { Identity } from "@semaphore-protocol/identity";
 import { generateProof, verifyProof } from "./proof-runtime.mjs";
+import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS, parseInsertionSlotBudget, replayGroupLogs, SEMAPHORE_EVENTS } from "./anonset-cli.mjs";
+import { CHECKPOINT_SCHEMA, createCheckpoint, importCheckpoint, readCheckpointFile, serializeCheckpoint, writeCheckpointFile } from "./checkpoint.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(directory, "anonset-cli.mjs");
@@ -28,6 +30,10 @@ function writeIdentity(file = identityFile()) {
 function writeProof(file = path.join(tmp, "proof.json")) {
     writeFileSync(file, JSON.stringify({ merkleTreeDepth: "20", merkleTreeRoot: "1", nullifier: "2", message: "0", scope: "0", points: Array(8).fill("1") }));
     return file;
+}
+function eventLog(name, values) {
+    const encoded = SEMAPHORE_EVENTS.encodeEventLog(SEMAPHORE_EVENTS.getEvent(name), values);
+    return { topics: encoded.topics, data: encoded.data };
 }
 async function startWrongChainRpc() {
     const source = "const h=require('http').createServer((q,s)=>{q.resume();s.setHeader('content-type','application/json');s.end(JSON.stringify({jsonrpc:'2.0',id:1,result:'0x1'}))});h.listen(0,'127.0.0.1',()=>console.log(h.address().port));";
@@ -52,6 +58,35 @@ beforeEach(() => { rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp,
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe("anonset CLI client hardening", () => {
+    it("uses a 65,536 insertion-slot default and strictly parses bounded overrides", () => {
+        assert.equal(DEFAULT_MAX_INSERTION_SLOTS, 65_536);
+        assert.equal(MAX_INSERTION_SLOTS, 4_294_967_296);
+        for (const value of ["65535", "65536", "65537", String(MAX_INSERTION_SLOTS)]) assert.equal(parseInsertionSlotBudget(value), Number(value));
+        assert.equal(parseInsertionSlotBudget("1"), 1);
+        for (const value of ["0", "-1", "1.5", "9007199254740992", String(MAX_INSERTION_SLOTS + 1)]) {
+            assert.throws(() => parseInsertionSlotBudget(value));
+        }
+        const id = identityFile(); writeIdentity(id);
+        assert.equal(run("proof", "generate", id, "missing.json", "--max-insertion-slots", "1").status, 3);
+        assert.equal(run("proof", "generate", id, "missing.json", "--max-insertion-slots", "1", "--max-insertion-slots", "2").status, 2);
+        assert.equal(run("proof", "generate", id, "missing.json", "--unrecognized").status, 2);
+    });
+
+    it("enforces insertion slots before single and batch replay work, while removals retain slots", () => {
+        const first = new Group([1n]);
+        const added = eventLog("MemberAdded", [1n, 0n, 1n, first.root]);
+        assert.throws(() => replayGroupLogs([added], 0), /exceeds 0 insertion slots/);
+        const batchTree = new Group([1n, 2n]);
+        const batch = eventLog("MembersAdded", [1n, 0n, [1n, 2n], batchTree.root]);
+        assert.throws(() => replayGroupLogs([batch], 1), /exceeds 1 insertion slots/);
+        const removedTree = new Group([1n]);
+        removedTree.removeMember(0);
+        const removed = eventLog("MemberRemoved", [1n, 0n, 1n, removedTree.root]);
+        const replayed = replayGroupLogs([added, removed], 1);
+        assert.equal(replayed.insertions, 1);
+        assert.equal(replayed.group.members.filter((member) => member !== 0n).length, 0);
+    });
+
     it("writes an atomic owner-only identity and never writes its secret to stdout", () => {
         const destination = identityFile();
         const result = run("identity", "create", destination, "0".repeat(64));
@@ -139,6 +174,54 @@ describe("anonset CLI client hardening", () => {
         assert.equal(unsafeChain.status, 2);
         assert.match(unsafeChain.stderr, /safe integer/);
     });
+});
+
+it("synthetic replay observation: 65,536 insertion slots without transactions", { timeout: 120_000 }, (t) => {
+    const started = performance.now();
+    const before = process.memoryUsage().rss;
+    const members = Array.from({ length: DEFAULT_MAX_INSERTION_SLOTS }, (_, index) => BigInt(index + 1));
+    const batch = eventLog("MembersAdded", [1n, 0n, members, 0n]);
+    const replayed = replayGroupLogs([batch], DEFAULT_MAX_INSERTION_SLOTS, false);
+    assert.equal(replayed.insertions, DEFAULT_MAX_INSERTION_SLOTS);
+    assert.equal(replayed.group.size, DEFAULT_MAX_INSERTION_SLOTS);
+    t.diagnostic(`observational replay: ${Math.round(performance.now() - started)} ms; rss delta ${process.memoryUsage().rss - before} bytes`);
+});
+
+it("checkpoint module round-trips deterministic public state", () => {
+    const group = new Group([1n, 2n]); group.removeMember(0);
+    const metadata = { chainId: "31337", registry: "0x0000000000000000000000000000000000000001", semaphore: "0x0000000000000000000000000000000000000002", groupId: "7", startBlock: "1", snapshotBlock: "2", snapshotHash: `0x${"a".repeat(64)}`, root: group.root.toString(), depth: String(group.depth), size: String(group.size), insertionSlots: "2", activeMembers: "1" };
+    const checkpoint = createCheckpoint(metadata, group, DEFAULT_MAX_INSERTION_SLOTS);
+    assert.equal(checkpoint.schema, CHECKPOINT_SCHEMA);
+    assert.equal(serializeCheckpoint(checkpoint), serializeCheckpoint(importCheckpoint(serializeCheckpoint(checkpoint), { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }).checkpoint));
+    assert.throws(() => importCheckpoint(serializeCheckpoint({ ...checkpoint, root: "0" }), { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }), /root/);
+    const underreported = { ...checkpoint, insertionSlots: "1" };
+    assert.throws(() => importCheckpoint(serializeCheckpoint(underreported), { maxInsertionSlots: 1 }), /insertionSlots/);
+    assert.throws(() => createCheckpoint({ ...metadata, insertionSlots: "1" }, group, 2), /insertionSlots/);
+});
+
+it("checkpoint persistence rejects unsafe or modified input and retains prior data on failure", () => {
+    const group = new Group([1n]);
+    const metadata = { chainId: "31337", registry: "0x0000000000000000000000000000000000000001", semaphore: "0x0000000000000000000000000000000000000002", groupId: "7", startBlock: "1", snapshotBlock: "2", snapshotHash: `0x${"b".repeat(64)}`, root: group.root.toString(), depth: String(group.depth), size: String(group.size), insertionSlots: "1", activeMembers: "1" };
+    const checkpoint = createCheckpoint(metadata, group, DEFAULT_MAX_INSERTION_SLOTS);
+    const destination = path.join(tmp, "checkpoint.json");
+    const descriptor = writeCheckpointFile(destination, checkpoint);
+    assert.equal(descriptor.groupExport, undefined);
+    assert.equal(readCheckpointFile(destination, { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }).group.root, group.root);
+    const original = readFileSync(destination, "utf8");
+    assert.throws(() => writeCheckpointFile(destination, checkpoint, { injectFailure: true }), /injected/);
+    assert.equal(readFileSync(destination, "utf8"), original);
+    const linked = path.join(tmp, "checkpoint-link.json"); symlinkSync(destination, linked);
+    assert.throws(() => readCheckpointFile(linked, { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }), /non-symlink/);
+    assert.throws(() => writeCheckpointFile(linked, checkpoint), /unsafe/);
+    const directory = path.join(tmp, "checkpoint-directory"); mkdirSync(directory);
+    assert.throws(() => readCheckpointFile(directory, { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }), /regular/);
+    writeFileSync(destination, JSON.stringify({ ...checkpoint, groupExportSha256: "0".repeat(64) }));
+    assert.throws(() => readCheckpointFile(destination, { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }), /hash/);
+    writeFileSync(destination, "x".repeat(5000));
+    assert.throws(() => readCheckpointFile(destination, { maxInsertionSlots: 1 }), /size policy/);
+    const twoMembers = new Group([1n, 2n]);
+    const twoMemberCheckpoint = createCheckpoint({ ...metadata, root: twoMembers.root.toString(), depth: String(twoMembers.depth), size: String(twoMembers.size), insertionSlots: "2", activeMembers: "2" }, twoMembers, 2);
+    assert.throws(() => writeCheckpointFile(path.join(tmp, "over-budget.json"), twoMemberCheckpoint, { maxInsertionSlots: 1 }), /budget/);
 });
 
 describe("anonset CLI proof integration", () => {
