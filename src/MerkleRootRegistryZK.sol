@@ -12,9 +12,9 @@ import { BuildInfo } from "./generated/BuildInfo.sol";
 /// to the group. Anyone holding a valid identity secret can generate a ZK proof
 /// demonstrating membership without revealing which identity they are.
 ///
-/// No nullifier tracking is performed — members may prove inclusion as often as
-/// they want. Use the parent Semaphore contract's validateProof for replay-protection
-/// if needed.
+/// Reusable verification does not track nullifiers, so members may prove inclusion
+/// repeatedly. The separate validateMembership flow delegates to Semaphore's
+/// nullifier tracking when replay protection is required.
 contract MerkleRootRegistryZK {
     error Unauthorized();
     error InvalidOwner();

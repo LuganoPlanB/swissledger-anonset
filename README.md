@@ -96,16 +96,112 @@ hashes, ABI/bytecode hashes, dependency evidence, and semantic outcomes.
 
 ## Proof semantics and administration
 
-`verifyMembership` is a reusable membership check. It verifies a Semaphore
-proof but deliberately does not consume the nullifier, so the same valid proof
-can be checked repeatedly. Use it only where replay is acceptable.
+There are two deliberate on-chain proof flows. The first is replay-permitting,
+not “under replay attack”: it is a reusable membership query by design. The
+second consumes the proof nullifier and is appropriate for a one-time claim.
+In both cases the member generates a Semaphore proof off-chain with
+`scope = groupId`; the registry reconstructs the proof with its immutable
+`groupId`, preventing callers from selecting another scope on-chain.
 
-`validateMembership` is the separate replay-protected claim path. It delegates
-to Semaphore's nullifier validation and rejects a repeated nullifier for the
-group scope. A caller-supplied message remains part of the proof; use an
-application-specific message and scope when defining a claim protocol. These
-events are intentionally distinct: `MembershipVerified` means reusable check;
-`MembershipValidated` means one-use validation.
+### Reusable verification — replay permitted
+
+Call either overload:
+
+```solidity
+verifyMembership(depth, root, nullifier, message, points)
+verifyMembership(depth, root, nullifier, points) // message = 0
+```
+
+The registry calls `Semaphore.verifyProof(groupId, proof)`. A valid proof
+returns `true` and a transaction emits `MembershipVerified`; an invalid proof
+returns `false`. No nullifier state is written, so submitting the same valid
+proof again can succeed and emit the event again. Use this for repeatable
+membership/authentication checks where replay has no one-time economic or
+authorization effect.
+
+```mermaid
+sequenceDiagram
+    participant P as Member / prover
+    participant A as Application / caller
+    participant R as MerkleRootRegistryZK
+    participant S as Semaphore
+
+    Note over P,R: Precondition — identity commitment is in the registry group
+    Note over P: generateProof(identity, group, message, scope=groupId)
+    P->>A: proof(depth, root, nullifier, message, points)
+    A->>R: verifyMembership(depth, root, nullifier, message, points)
+    Note over R: _buildProof pins scope=groupId
+    R->>S: verifyProof(groupId, proof)
+    alt proof is valid
+        S-->>R: true
+        Note over R: emit MembershipVerified(root, nullifier)
+        R-->>A: true
+    else proof is invalid
+        S-->>R: false
+        R-->>A: false
+    end
+    opt the same valid proof is submitted again
+        A->>R: verifyMembership(same proof)
+        R->>S: verifyProof(groupId, same proof)
+        S-->>R: true
+        Note over R: emit MembershipVerified again
+        R-->>A: true
+        Note over R,S: nullifier was never recorded or consumed
+    end
+```
+
+### Protected validation — replay rejected
+
+Call either overload as a transaction:
+
+```solidity
+validateMembership(depth, root, nullifier, message, points)
+validateMembership(depth, root, nullifier, points) // message = 0
+```
+
+The registry calls `Semaphore.validateProof(groupId, proof)`. On the first
+valid use, Semaphore records the nullifier, the registry emits
+`MembershipValidated`, and the call returns `true`. An invalid proof or a
+second use of the same nullifier reverts; reverted calls emit no event and
+retain no partial state. Use a claim-specific `message` when the proof must be
+bound to an application action rather than generic membership.
+
+```mermaid
+sequenceDiagram
+    participant P as Member / prover
+    participant A as Application / relayer
+    participant R as MerkleRootRegistryZK
+    participant S as Semaphore
+
+    Note over P,R: Precondition — identity commitment is in the registry group
+    Note over P: generateProof(identity, group, message, scope=groupId)
+    P->>A: proof(depth, root, nullifier, message, points)
+    A->>R: validateMembership(depth, root, nullifier, message, points)
+    Note over R: _buildProof pins scope=groupId
+    R->>S: validateProof(groupId, proof)
+    alt proof is valid and nullifier is unused
+        Note over S: verify Groth16 proof and record nullifier
+        S-->>R: accepted
+        Note over R: emit MembershipValidated(root, nullifier)
+        R-->>A: true
+    else proof is invalid
+        S-->>R: revert
+        R-->>A: revert with no event or state change
+    else nullifier was already consumed
+        Note over S: reject replay for this group scope
+        S-->>R: revert
+        R-->>A: revert with no event or state change
+    end
+```
+
+The CLI command `verify on-chain` performs a read-only `staticCall` to the
+five-argument `verifyMembership` overload. It returns the reusable result but
+does not create a transaction or emit `MembershipVerified`. Applications that
+need replay protection must submit `validateMembership` as an actual
+transaction, normally through their relayer or transaction signer.
+
+The events are intentionally distinct: `MembershipVerified` means a reusable
+check; `MembershipValidated` means successful one-use validation.
 
 The registry has a two-step owner transfer (`transferOwnership`, then
 `acceptOwnership`). The accepted owner becomes a member manager; explicitly

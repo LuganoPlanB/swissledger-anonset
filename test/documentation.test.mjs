@@ -17,6 +17,12 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(readme, /SwissLedger testnet \| `222`/);
     assert.match(readme, /SwissLedger production \| `110`/);
     assert.match(readme, /validateMembership/);
+    assert.equal([...readme.matchAll(/```mermaid/g)].length, 2);
+    assert.match(readme, /verifyMembership\(depth, root, nullifier, message, points\)/);
+    assert.match(readme, /validateMembership\(depth, root, nullifier, message, points\)/);
+    assert.match(readme, /staticCall/);
+    assert.match(readme, /nullifier was never recorded or consumed/);
+    assert.match(readme, /reject replay for this group scope/);
     assert.match(readme, /96\.04%/);
     assert.match(readme, /10,689,124/);
     assert.match(readme, /36\.279 s/);
