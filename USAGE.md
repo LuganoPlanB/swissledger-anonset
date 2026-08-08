@@ -106,7 +106,7 @@ updating documented numbers.
 ```bash
 npm run anonset -- identity create identity.json
 npm run anonset -- proof generate identity.json group.json 0 <group-id>
-npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> 0 [from-block]
+npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> 0 [from-block] [--checkpoint <file>] [--confirmations <n>]
 npm run anonset -- verify local proof.json
 npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
 ```
@@ -123,6 +123,10 @@ snapshot's final root/depth/size, and only then generates a scope-bound proof.
 Raw secrets are accepted only through bounded stdin (`-`), never as a command
 argument. Its JSON exposes non-secret reconstruction/timing/gas-estimate
 measurements but never the identity commitment or leaf index.
+Use `--checkpoint <file>` for an atomically written, public cache. It is only
+used after its block anchor and historical group state validate; otherwise the
+command rebuilds trusted complete history. Successful output includes a
+redacted `checkpoint` descriptor and checkpoint timings.
 
 ## CI and evidence contract
 

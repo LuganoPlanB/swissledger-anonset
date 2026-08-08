@@ -321,7 +321,7 @@ active member and generates a proof scoped to the registry group ID. A pruned
 RPC may require a trusted deployment block as the optional final argument; the
 RPC must still retain the event logs.
 
-`proof.json` includes non-secret `chain`, `metrics`, and `gasEstimates` objects.
+`proof.json` includes non-secret `chain`, `checkpoint`, `metrics`, and `gasEstimates` objects.
 The timings split deployment discovery, log fetch, reconstruction, Groth16
 proof generation, gas estimation, and total wall time. Gas values are decimal
 `eth_estimateGas` results for the five-argument reusable and protected calls,

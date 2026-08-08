@@ -16,9 +16,10 @@ import { fileURLToPath } from "node:url";
 import { Identity } from "@semaphore-protocol/identity";
 import { Group } from "@semaphore-protocol/group";
 import { generateProof, verifyProof } from "./proof-runtime.mjs";
-import { Contract, Interface, isAddress, JsonRpcProvider, toBeHex, zeroPadValue } from "ethers";
+import { Contract, Interface, getAddress, isAddress, JsonRpcProvider, toBeHex, zeroPadValue } from "ethers";
 import { performance } from "node:perf_hooks";
 import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS, MAX_TREE_DEPTH } from "./insertion-policy.mjs";
+import { CHECKPOINT_SCHEMA, createCheckpoint, readCheckpointFile, writeCheckpointFile } from "./checkpoint.mjs";
 
 const MAX_JSON_BYTES = 1024 * 1024;
 export { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS } from "./insertion-policy.mjs";
@@ -43,6 +44,8 @@ function fail(message, exitCode = EXIT_USAGE) {
 function output(value) {
     process.stdout.write(`${JSON.stringify(value)}\n`);
 }
+
+function checkpointError(message) { fail(message, EXIT_FILE); }
 
 function parseJson(text, label) {
     try {
@@ -235,9 +238,9 @@ async function fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, to
     return logs.sort((left, right) => left.blockNumber - right.blockNumber || left.transactionIndex - right.transactionIndex || left.index - right.index);
 }
 
-export function replayGroupLogs(logs, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS, verifyEventRoots = true) {
-    const group = new Group();
-    let insertions = 0;
+export function replayGroupLogs(logs, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS, verifyEventRoots = true, initialGroup = new Group()) {
+    const group = initialGroup;
+    let insertions = group.size;
     for (const log of logs) {
         let parsed;
         try { parsed = SEMAPHORE_EVENTS.parseLog(log); } catch { fail("Semaphore event decoding failed", EXIT_RPC); }
@@ -272,6 +275,38 @@ export function replayGroupLogs(logs, maxInsertionSlots = DEFAULT_MAX_INSERTION_
     return { group, insertions };
 }
 
+async function blockAnchor(provider, number, label) {
+    let block;
+    try { block = await provider.getBlock(number); } catch { fail(`${label} block lookup failed`, EXIT_RPC); }
+    if (!block || typeof block.hash !== "string" || !/^0x[0-9a-f]{64}$/i.test(block.hash)) fail(`${label} block is unavailable`, EXIT_RPC);
+    return { number, hash: block.hash };
+}
+
+async function semaphoreState(semaphore, groupId, atBlock, label) {
+    try {
+        const [root, depth, size] = await Promise.all([
+            semaphore.getMerkleTreeRoot(groupId, { blockTag: atBlock }),
+            semaphore.getMerkleTreeDepth(groupId, { blockTag: atBlock }),
+            semaphore.getMerkleTreeSize(groupId, { blockTag: atBlock }),
+        ]);
+        return { root, depth, size };
+    } catch { fail(`${label} Semaphore state lookup failed`, EXIT_RPC); }
+}
+
+function sameGroupState(group, state) {
+    return group.root === state.root && BigInt(group.depth) === state.depth && BigInt(group.size) === state.size;
+}
+
+function publicCheckpointDescriptor({ mode, persisted, requestedPath, file, base, target, checkpoint, deltaEvents }) {
+    return {
+        mode, persisted, path: requestedPath ?? null,
+        fileSha256: file?.fileSha256 ?? null, bytes: file?.bytes ?? null,
+        baseBlock: base.number, baseHash: base.hash, targetBlock: target.number, targetHash: target.hash,
+        schema: CHECKPOINT_SCHEMA, root: checkpoint.root, depth: checkpoint.depth, size: checkpoint.size,
+        insertionSlots: checkpoint.insertionSlots, activeMembers: checkpoint.activeMembers, deltaEvents,
+    };
+}
+
 async function estimateProofGas(registry, proof) {
     const args = [proof.merkleTreeDepth, proof.merkleTreeRoot, proof.nullifier, proof.message, proof.points];
     const estimate = async (signature) => {
@@ -302,9 +337,10 @@ async function cmdProofGenerate(identityPath, groupPath, message = "0", scope = 
     output({ merkleTreeDepth: proof.merkleTreeDepth, merkleTreeRoot: proof.merkleTreeRoot, nullifier: proof.nullifier, message: proof.message, scope: proof.scope, points: proof.points });
 }
 
-async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, chainId, message = "0", suppliedFromBlock, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS) {
+async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, chainId, message = "0", suppliedFromBlock, maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS, checkpointPath = null, confirmations = 0) {
     const totalStarted = performance.now();
     if (!isAddress(registryAddress)) fail("registry address is invalid");
+    registryAddress = getAddress(registryAddress);
     const expectedChainId = field(chainId, "chain ID");
     if (expectedChainId === 0n) fail("chain ID must be nonzero");
     if (expectedChainId > BigInt(Number.MAX_SAFE_INTEGER)) fail("chain ID exceeds the supported safe integer range");
@@ -313,7 +349,13 @@ async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, ch
     await assertRpcChain(rpcUrl, expectedChainId);
     const provider = new JsonRpcProvider(rpcUrl, Number(expectedChainId), { staticNetwork: true });
     try {
-        const latestBlock = await provider.getBlockNumber();
+        let attempts = 0;
+        let result;
+        while (attempts < 3 && !result) {
+        const head = await provider.getBlockNumber();
+        const latestBlock = head - confirmations;
+        if (latestBlock < 0) fail("confirmations exceed the current chain height", EXIT_RPC);
+        const target = await blockAnchor(provider, latestBlock, "target");
         const discoveryStarted = performance.now();
         const fromBlock = suppliedFromBlock === undefined
             ? await discoverDeploymentBlock(provider, registryAddress, latestBlock)
@@ -336,32 +378,67 @@ async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, ch
             ]);
         } catch { fail("registry metadata lookup failed", EXIT_RPC); }
         if (!isAddress(semaphoreAddress) || await provider.getCode(semaphoreAddress, latestBlock) === "0x") fail("registry Semaphore address has no bytecode", EXIT_RPC);
-        const fetchStarted = performance.now();
-        const logs = await fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, latestBlock);
-        const eventFetchMs = elapsed(fetchStarted);
-        const reconstructionStarted = performance.now();
-        const { group, insertions } = replayGroupLogs(logs, maxInsertionSlots);
         const semaphore = new Contract(semaphoreAddress, [
             "function getMerkleTreeRoot(uint256) view returns (uint256)",
             "function getMerkleTreeDepth(uint256) view returns (uint256)",
             "function getMerkleTreeSize(uint256) view returns (uint256)",
         ], provider);
-        let onChainRoot;
-        let onChainDepth;
-        let onChainSize;
-        try {
-            [onChainRoot, onChainDepth, onChainSize] = await Promise.all([
-                semaphore.getMerkleTreeRoot(groupId, { blockTag: latestBlock }),
-                semaphore.getMerkleTreeDepth(groupId, { blockTag: latestBlock }),
-                semaphore.getMerkleTreeSize(groupId, { blockTag: latestBlock }),
-            ]);
-        } catch { fail("Semaphore state lookup failed", EXIT_RPC); }
-        if (group.root !== onChainRoot || BigInt(group.depth) !== onChainDepth || BigInt(group.size) !== onChainSize) {
+        let group = null;
+        let insertions = 0;
+        let replayFrom = fromBlock;
+        let mode = checkpointPath ? "full" : "unpersisted";
+        let base = { number: fromBlock, hash: (await blockAnchor(provider, fromBlock, "start")).hash };
+        let checkpointLoadMs = 0;
+        let cacheWasPresent = false;
+        if (checkpointPath) {
+            const loadStarted = performance.now();
+            if (existsSync(checkpointPath)) {
+                cacheWasPresent = true;
+                let imported;
+                try { imported = readCheckpointFile(checkpointPath, { maxInsertionSlots }); }
+                catch (error) { checkpointError(`checkpoint validation failed: ${error.message}`); }
+                const saved = imported.checkpoint;
+                const identityMatches = saved.chainId === expectedChainId.toString() && saved.registry === registryAddress && saved.semaphore === semaphoreAddress && saved.groupId === groupId.toString() && saved.startBlock === String(fromBlock);
+                if (!identityMatches) checkpointError("checkpoint identity does not match the requested chain, registry, Semaphore, group, and start block");
+                let validAnchor = identityMatches && Number(saved.snapshotBlock) <= latestBlock;
+                if (validAnchor) {
+                    try {
+                        const anchor = await blockAnchor(provider, Number(saved.snapshotBlock), "checkpoint anchor");
+                        const historical = await semaphoreState(semaphore, groupId, Number(saved.snapshotBlock), "checkpoint historical");
+                        validAnchor = anchor.hash.toLowerCase() === saved.snapshotHash.toLowerCase() && sameGroupState(imported.group, historical);
+                        if (validAnchor) { group = imported.group; insertions = group.size; replayFrom = Number(saved.snapshotBlock) + 1; base = anchor; mode = "resumed"; }
+                    } catch (error) {
+                        if (error instanceof CliError && error.exitCode !== EXIT_RPC) throw error;
+                        validAnchor = false;
+                    }
+                }
+                if (!validAnchor) mode = "rebuilt-after-reorg";
+            }
+            checkpointLoadMs = elapsed(loadStarted);
+        }
+        const fetchStarted = performance.now();
+        const logs = replayFrom > latestBlock ? [] : await fetchGroupLogs(provider, semaphoreAddress, groupId, replayFrom, latestBlock);
+        const eventFetchMs = elapsed(fetchStarted);
+        const reconstructionStarted = performance.now();
+        ({ group, insertions } = replayGroupLogs(logs, maxInsertionSlots, true, group ?? new Group()));
+        const onChain = await semaphoreState(semaphore, groupId, latestBlock, "target");
+        if (!sameGroupState(group, onChain)) {
             fail("reconstructed group does not match on-chain root, depth, and size", EXIT_RPC);
         }
+        const targetAfter = await blockAnchor(provider, latestBlock, "target");
+        if (targetAfter.hash.toLowerCase() !== target.hash.toLowerCase()) { attempts += 1; continue; }
+        const activeMembers = group.members.filter((member) => member !== 0n).length;
+        const metadata = { chainId: expectedChainId.toString(), registry: registryAddress, semaphore: semaphoreAddress, groupId: groupId.toString(), startBlock: String(fromBlock), snapshotBlock: String(latestBlock), snapshotHash: target.hash, root: group.root.toString(), depth: String(group.depth), size: String(group.size), insertionSlots: String(insertions), activeMembers: String(activeMembers) };
+        const checkpoint = createCheckpoint(metadata, group, maxInsertionSlots);
+        let checkpointFile = null;
+        const checkpointWriteStarted = performance.now();
+        if (checkpointPath) {
+            try { checkpointFile = writeCheckpointFile(checkpointPath, checkpoint, { maxInsertionSlots }); }
+            catch (error) { checkpointError(`could not persist checkpoint: ${error.message}`); }
+        }
+        const checkpointWriteMs = elapsed(checkpointWriteStarted);
         if (group.indexOf(identity.commitment) < 0) fail("identity is not an active member of the reconstructed group", EXIT_FILE);
         if (group.depth === 0 || group.depth > MAX_TREE_DEPTH) fail(`reconstructed tree depth must be 1-${MAX_TREE_DEPTH}`, EXIT_FILE);
-        const activeMembers = group.members.filter((member) => member !== 0n).length;
         const reconstructionMs = elapsed(reconstructionStarted);
         const proofStarted = performance.now();
         const proof = await generateProof(identity, group, message, groupId);
@@ -369,7 +446,7 @@ async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, ch
         const gasStarted = performance.now();
         const gasEstimates = await estimateProofGas(registry, proof);
         const gasEstimationMs = elapsed(gasStarted);
-        output({
+        result = {
             merkleTreeDepth: proof.merkleTreeDepth,
             merkleTreeRoot: proof.merkleTreeRoot,
             nullifier: proof.nullifier,
@@ -387,9 +464,13 @@ async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, ch
                 insertionSlots: insertions,
                 activeMembers,
             },
-            metrics: { deploymentDiscoveryMs, eventFetchMs, reconstructionMs, proofGenerationMs, gasEstimationMs, totalMs: elapsed(totalStarted) },
+            checkpoint: publicCheckpointDescriptor({ mode, persisted: Boolean(checkpointFile), requestedPath: checkpointPath, file: checkpointFile, base, target, checkpoint, deltaEvents: logs.length }),
+            metrics: { deploymentDiscoveryMs, eventFetchMs, reconstructionMs, checkpointLoadMs, checkpointWriteMs, proofGenerationMs, gasEstimationMs, totalMs: elapsed(totalStarted) },
             gasEstimates,
-        });
+        };
+        }
+        if (!result) fail("target block changed during reconstruction after 3 attempts", EXIT_RPC);
+        output(result);
     } catch (error) {
         if (error instanceof CliError) throw error;
         fail("chain proof generation failed", EXIT_RPC);
@@ -418,12 +499,16 @@ async function cmdVerifyOnChain(contractAddress, proofPath, rpcUrl, chainId) {
     } catch { fail("on-chain proof verification failed", EXIT_RPC); } finally { provider.destroy(); }
 }
 
-const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
+const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
 
-function parseProofPositionals(arguments_, minimum, maximum) {
+function parseProofPositionals(arguments_, minimum, maximum, allowChainOptions = false) {
     const positional = [];
     let maxInsertionSlots = DEFAULT_MAX_INSERTION_SLOTS;
     let sawBudget = false;
+    let checkpointPath = null;
+    let confirmations = 0;
+    let sawCheckpoint = false;
+    let sawConfirmations = false;
     for (let index = 0; index < arguments_.length; index += 1) {
         const argument = arguments_[index];
         if (argument === "--max-insertion-slots") {
@@ -432,6 +517,19 @@ function parseProofPositionals(arguments_, minimum, maximum) {
             if (index + 1 === arguments_.length) fail("--max-insertion-slots requires a value");
             maxInsertionSlots = parseInsertionSlotBudget(arguments_[index + 1]);
             index += 1;
+        } else if (argument === "--checkpoint") {
+            if (!allowChainOptions) fail(`unknown option: ${argument}`);
+            if (sawCheckpoint) fail("checkpoint option may only be supplied once");
+            sawCheckpoint = true;
+            if (index + 1 === arguments_.length || !arguments_[index + 1] || arguments_[index + 1].startsWith("-")) fail("--checkpoint requires a file path");
+            checkpointPath = arguments_[index + 1]; index += 1;
+        } else if (argument === "--confirmations") {
+            if (!allowChainOptions) fail(`unknown option: ${argument}`);
+            if (sawConfirmations) fail("confirmations option may only be supplied once");
+            sawConfirmations = true;
+            const value = arguments_[index + 1];
+            if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value))) fail("confirmations must be a non-negative safe integer");
+            confirmations = Number(value); index += 1;
         } else if (argument.startsWith("-") && argument !== "-") {
             fail(`unknown option: ${argument}`);
         } else {
@@ -439,7 +537,7 @@ function parseProofPositionals(arguments_, minimum, maximum) {
         }
     }
     if (positional.length < minimum || positional.length > maximum) fail(USAGE);
-    return { positional, maxInsertionSlots };
+    return { positional, maxInsertionSlots, checkpointPath, confirmations };
 }
 
 async function run(args) {
@@ -456,8 +554,8 @@ async function run(args) {
         return cmdProofGenerate(positional[0], positional[1], positional[2], positional[3], maxInsertionSlots);
     }
     if (command === "proof" && subcommand === "generate-chain") {
-        const { positional, maxInsertionSlots } = parseProofPositionals(rest, 4, 6);
-        return cmdProofGenerateChain(positional[0], positional[1], positional[2], positional[3], positional[4], positional[5], maxInsertionSlots);
+        const { positional, maxInsertionSlots, checkpointPath, confirmations } = parseProofPositionals(rest, 4, 6, true);
+        return cmdProofGenerateChain(positional[0], positional[1], positional[2], positional[3], positional[4], positional[5], maxInsertionSlots, checkpointPath, confirmations);
     }
     if (command === "verify" && subcommand === "local" && rest.length === 1) return cmdVerifyLocal(rest[0]);
     if (command === "verify" && subcommand === "on-chain" && rest.length === 4) return cmdVerifyOnChain(...rest);
