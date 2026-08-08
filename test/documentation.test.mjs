@@ -23,6 +23,12 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(readme, /staticCall/);
     assert.match(readme, /nullifier was never recorded or consumed/);
     assert.match(readme, /reject replay for this group scope/);
+    assert.match(readme, /hasMember\(uint256,uint256\)\(bool\)/);
+    assert.match(readme, /MemberAdded`, `MembersAdded`, and\s+`MemberRemoved`/);
+    assert.match(readme, /Group\.export\(\)/);
+    assert.match(readme, /1–1,024 commitments/);
+    assert.match(readme, /historical roots for one hour/);
+    assert.match(readme, /merkleProofSiblings.*transaction calldata/s);
     assert.match(readme, /96\.04%/);
     assert.match(readme, /10,689,124/);
     assert.match(readme, /36\.279 s/);

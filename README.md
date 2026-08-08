@@ -94,7 +94,7 @@ Aggregate deployment gas was **10,689,124**, protocol-transaction gas was
 contains receipt/block identities, per-operation measurements, runtime-code
 hashes, ABI/bytecode hashes, dependency evidence, and semantic outcomes.
 
-## Proof semantics and administration
+## Application integration and proof semantics
 
 There are two deliberate on-chain proof flows. The first is replay-permitting,
 not “under replay attack”: it is a reusable membership query by design. The
@@ -102,6 +102,27 @@ second consumes the proof nullifier and is appropriate for a one-time claim.
 In both cases the member generates a Semaphore proof off-chain with
 `scope = groupId`; the registry reconstructs the proof with its immutable
 `groupId`, preventing callers from selecting another scope on-chain.
+
+### What the proof reveals
+
+The Merkle root alone is sufficient to identify a tree state, but it is not
+sufficient to generate a membership proof. The prover also needs the identity
+secret and the Merkle inclusion witness connecting its public commitment to
+that root. Semaphore keeps those values inside the Groth16 witness.
+
+| Value | Purpose | Visibility during verification |
+|---|---|---|
+| Identity secret | Proves control of the member identity | Private; never sent on-chain |
+| Identity commitment | Leaf stored in the Semaphore group | Public in group events/state |
+| Merkle sibling path and indices | Connect the leaf to the selected root | Private proof witness; not passed to the verifier |
+| Merkle tree depth | Number of tree levels/path length | Public proof input; not the path itself |
+| Root, nullifier, message, scope | Bind the proof to tree state and application semantics | Public proof inputs |
+| Groth16 points | Succinct proof of the hidden witness | Public, constant-size proof |
+
+Although the path is not revealed by a ZK proof, it is not inherently secret:
+anyone who reconstructs the same public commitment tree can derive it. The ZK
+property prevents the verifier from learning which commitment/path the prover
+used.
 
 ### Reusable verification — replay permitted
 
@@ -202,6 +223,130 @@ transaction, normally through their relayer or transaction signer.
 
 The events are intentionally distinct: `MembershipVerified` means a reusable
 check; `MembershipValidated` means successful one-use validation.
+
+### Checking current membership without a path
+
+If an application already has a public Semaphore identity commitment, it does
+not need a Merkle path merely to check current membership. Read the registry's
+immutable `semaphore` and `groupId`, then call Semaphore directly:
+
+```bash
+bin/swissledger-cast call <registry-address> \
+  'semaphore()(address)' --rpc-url <rpc-url>
+
+bin/swissledger-cast call <registry-address> \
+  'groupId()(uint256)' --rpc-url <rpc-url>
+
+bin/swissledger-cast call <semaphore-address> \
+  'hasMember(uint256,uint256)(bool)' \
+  <group-id> <identity-commitment> --rpc-url <rpc-url>
+```
+
+`hasMember` uses Semaphore's on-chain commitment-to-index mapping and reflects
+current membership, including removal. `indexOf(groupId, commitment)` returns
+the current leaf index and reverts if the commitment is absent.
+
+An application username, database key, wallet address, or other external
+“member identifier” is not a Semaphore commitment. The chain cannot check it
+unless the application maintains an explicit mapping. Likewise, knowing a
+commitment is enough to query public presence but not to create an anonymous
+proof: proof generation requires the corresponding identity secret.
+
+### Obtaining a path as a new participant
+
+The contract does not provide a getter that returns sibling paths. A new prover
+derives one by reconstructing the public LeanIMT from chain events, or by using
+an indexer snapshot whose root is independently checked on-chain:
+
+1. Read `semaphore()` and `groupId()` from the registry and identify the group
+   creation block.
+2. Scan the Semaphore contract for `MemberAdded`, `MembersAdded`, and
+   `MemberRemoved` events for that group. Process logs in canonical
+   `(blockNumber, transactionIndex, logIndex)` order.
+3. Insert additions at their emitted `index`/`startIndex`. On removal, replace
+   the emitted leaf index with zero; LeanIMT insertion positions are not
+   renumbered or shrunk.
+4. Compare the reconstructed `Group.root`, depth, and size with Semaphore's
+   `getMerkleTreeRoot`, `getMerkleTreeDepth`, and `getMerkleTreeSize` calls.
+5. Find the participant commitment with `group.indexOf(commitment)`. The
+   Semaphore Group library can then derive the path with
+   `group.generateMerkleProof(index)`, while `generateProof` performs this step
+   internally when given the identity and reconstructed group.
+
+An indexer may cache and publish `Group.export()` snapshots to avoid replaying
+the complete history for every client. Each snapshot should include its chain,
+Semaphore address, group ID, block number/hash, root, depth, and size. A client
+must import it and compare the resulting root to the contract; therefore the
+indexer supplies availability and speed, not authority over membership.
+Production indexers must also chunk `eth_getLogs` requests, preserve event
+ordering, wait for the application's required finality, and roll back snapshots
+after a chain reorganization.
+
+Use the current tree where possible. Semaphore accepts the current root and,
+for groups created by this registry, historical roots for one hour. A proof
+generated from an older snapshot will revert after that root expires.
+
+The bundled CLI currently accepts a `group.json` containing 1–1,024 commitments
+and derives the witness locally. This is suitable for examples and bounded
+groups; larger or frequently changing groups should use an indexed/exported
+tree representation rather than repeatedly downloading a monolithic member
+list.
+
+### Member-count cost scaling
+
+Let `N` be LeanIMT's insertion count, including positions later zeroed by
+removal. Tree depth and path length grow approximately as `ceil(log2(N))` and
+increase at powers of two.
+
+| Operation | Effect of more insertion positions |
+|---|---|
+| `hasMember(groupId, commitment)` | Approximately constant lookup through the commitment mapping |
+| Add one member | O(log N) tree work and storage updates |
+| Remove or update a member | O(log N) hashing plus O(log N) sibling calldata |
+| Derive a path from an already reconstructed tree | O(log N) sibling values |
+| Reconstruct the tree from its full event history | O(N) leaves/mutations overall |
+| Generate a Groth16 proof | Increases with supported tree depth, not linearly with every member |
+| Verify or validate a Groth16 proof | Constant-size proof; cost does not grow linearly with member count |
+
+| Insertion positions | Approximate depth/path values |
+|---:|---:|
+| 2 | 1 |
+| 1,024 | 10 |
+| 1,048,576 | 20 |
+| 4,294,967,296 | 32, the supported proof-depth maximum |
+
+`hasMember` is normally an `eth_call`, so the caller pays no transaction gas.
+Tree reconstruction, path derivation, and proof generation are also off-chain
+costs: they consume client/indexer CPU, memory, RPC bandwidth, and time rather
+than blockchain gas. Adds, removals, `verifyMembership` transactions, and
+`validateMembership` transactions consume gas.
+
+The benchmark above used a two-member, depth-1 tree: reusable verification
+consumed 259,106 gas and protected validation 286,515 gas for the recorded
+inputs. Treat those as a regression baseline, not a promise for every depth or
+message. Groth16 proof calldata remains constant-size as the group grows, while
+the selected depth-specific verifier and surrounding contract checks may cause
+modest depth-dependent differences. Removal calldata grows by one sibling field
+element per additional tree level.
+
+Batch insertion is more efficient than separate transactions and this registry
+caps a batch at 64 commitments. Application capacity planning should benchmark
+representative depths and provider conditions instead of extrapolating linearly
+from the two-member smoke run.
+
+### Removal path visibility
+
+`removeMember(identityCommitment, merkleProofSiblings)` is an administrative
+tree mutation, not an anonymous proof. Both the removed commitment and sibling
+array are visible in transaction calldata and remain in blockchain history for
+participants able to inspect it. The registry does not store the siblings in
+contract storage or emit them separately, but calldata is public data.
+
+This does not disclose the identity secret and does not by itself link earlier
+anonymous proofs to the removed commitment. If an application required the
+removal path or commitment itself to remain confidential, it would need a
+different ZK-based removal protocol; the current Semaphore group mutation API
+does not provide that property.
 
 The registry has a two-step owner transfer (`transferOwnership`, then
 `acceptOwnership`). The accepted owner becomes a member manager; explicitly
