@@ -5,7 +5,7 @@ import { Contract, ContractFactory, JsonRpcProvider, NonceManager, Wallet, getAd
 import { Group } from "@semaphore-protocol/group";
 import { performance } from "node:perf_hooks";
 import { readCheckpointFile } from "./checkpoint.mjs";
-import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS } from "./insertion-policy.mjs";
+import { DEFAULT_MAX_INSERTION_SLOTS, normalizeInsertionSlotBudget } from "./insertion-policy.mjs";
 
 export const ROTATION_JOURNAL_SCHEMA = "swissledger-anonset-rotation/v1";
 const MAX_KEY_BYTES = 128;
@@ -13,6 +13,19 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 const decimal = (value, label) => {
     if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${label} must be decimal`);
     return value;
+};
+const safeInteger = (value, label, fail, positive = false) => {
+    const serialized = typeof value === "number" ? String(value) : value;
+    if (typeof serialized !== "string" || !(positive ? /^[1-9][0-9]*$/ : /^(0|[1-9][0-9]*)$/).test(serialized)) fail(`${label} must be a ${positive ? "positive" : "non-negative"} safe integer`);
+    const parsed = Number(serialized);
+    if (!Number.isSafeInteger(parsed)) fail(`${label} must be a ${positive ? "positive" : "non-negative"} safe integer`);
+    return parsed;
+};
+const insertionBudget = (value, fail) => {
+    const serialized = typeof value === "number" ? String(value) : value;
+    if (typeof serialized !== "string" || !/^[1-9][0-9]*$/.test(serialized)) fail("max insertion slots must be a positive safe integer");
+    try { return normalizeInsertionSlotBudget(Number(serialized)); }
+    catch (error) { fail(error.message); }
 };
 const safePath = (file, label) => {
     const target = path.resolve(file); const parent = path.dirname(target);
@@ -38,8 +51,14 @@ export function parseRotationArguments(args, fail) {
     for (let i = 0; i < args.length; i += 1) { const token = args[i]; if (token === "--manager") { const value = args[++i]; if (!value || !isAddress(value)) fail("--manager requires a valid address"); options.managers.push(getAddress(value)); continue; } if (names.has(token)) { const name = names.get(token); if (seen.has(name)) fail(`${token} may only be supplied once`); seen.add(name); const value = args[++i]; if (!value || value.startsWith("-")) fail(`${token} requires a value`); options[name] = value; continue; } if (token.startsWith("-")) fail(`unknown option: ${token}`); else positional.push(token); }
     if (positional.length !== 3 || !options.checkpoint || !options.journal || !options.expectedSigner) fail("group rotate requires source registry, RPC URL, chain ID, --checkpoint, --journal, and --expected-signer");
     for (const name of ["expectedSigner", "targetOwner"]) if (options[name] && !isAddress(options[name])) fail(`${name} must be an address`); options.expectedSigner = getAddress(options.expectedSigner); if (options.targetOwner) options.targetOwner = getAddress(options.targetOwner);
-    for (const name of ["batchSize", "confirmations", "gasPrice", "deployGasLimit", "batchGasLimit"]) if (options[name] !== null) { if (!/^(0|[1-9][0-9]*)$/.test(options[name])) fail(`${name} must be a non-negative integer`); options[name] = BigInt(options[name]); }
-    if (options.batchSize < 1n || options.batchSize > 64n) fail("batchSize must be 1-64"); if (!/^[1-9][0-9]*$/.test(String(options.maxInsertionSlots)) || Number(options.maxInsertionSlots) > MAX_INSERTION_SLOTS) fail("maxInsertionSlots must be within the depth-32 insertion limit"); options.maxInsertionSlots = Number(options.maxInsertionSlots); return { source: positional[0], rpcUrl: positional[1], chainId: positional[2], ...options };
+    for (const name of ["batchSize", "gasPrice", "deployGasLimit", "batchGasLimit"]) if (options[name] !== null) { if (!/^(0|[1-9][0-9]*)$/.test(options[name])) fail(`${name} must be a non-negative integer`); options[name] = BigInt(options[name]); }
+    if (options.batchSize < 1n || options.batchSize > 64n) fail("batchSize must be 1-64");
+    options.confirmations = safeInteger(options.confirmations, "confirmations", fail);
+    options.maxInsertionSlots = insertionBudget(options.maxInsertionSlots, fail);
+    if (!isAddress(positional[0])) fail("source registry address is invalid");
+    if (!/^https?:\/\//.test(positional[1]) || /@/.test(positional[1])) fail("RPC URL must be absolute credential-free http(s)");
+    safeInteger(positional[2], "chain ID", fail, true);
+    return { source: positional[0], rpcUrl: positional[1], chainId: positional[2], ...options };
 }
 function stdinKey(fail) { const chunks = []; let total = 0; for (;;) { const chunk = Buffer.alloc(64); const count = readSync(0, chunk, 0, chunk.length, null); if (count === 0) break; total += count; if (total > MAX_KEY_BYTES) fail("stdin signing key is too large"); chunks.push(chunk.subarray(0, count)); } const value = Buffer.concat(chunks).toString("utf8").trim().replace(/^0x/, ""); if (!/^[0-9a-f]{64}$/i.test(value)) fail("stdin signing key must be a raw 32-byte hexadecimal key"); return `0x${value}`; }
 function artifact() { const file = new URL("../../out/MerkleRootRegistryZK.sol/MerkleRootRegistryZK.json", import.meta.url); const raw = readFileSync(file, "utf8"); const parsed = JSON.parse(raw); if (!Array.isArray(parsed.abi) || typeof parsed.bytecode?.object !== "string" || !/^0x[0-9a-f]+$/i.test(parsed.bytecode.object)) throw new Error("registry artifact is invalid"); return { abi: parsed.abi, bytecode: parsed.bytecode.object, abiSha256: hash(JSON.stringify(parsed.abi)), bytecodeSha256: hash(parsed.bytecode.object) }; }
@@ -51,10 +70,11 @@ export async function rotateGroup(options, fail) {
     try { lock = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600); closeSync(lock); lock = undefined; }
     catch { fail("rotation journal is locked by another operation"); }
     try {
-    if (!isAddress(options.source)) fail("source registry address is invalid"); if (!/^https?:\/\//.test(options.rpcUrl) || /@/.test(options.rpcUrl)) fail("RPC URL must be absolute credential-free http(s)"); if (!/^[1-9][0-9]*$/.test(options.chainId)) fail("chain ID must be nonzero decimal");
-    const source = getAddress(options.source); const checkpoint = readCheckpointFile(options.checkpoint, { maxInsertionSlots: options.maxInsertionSlots }).checkpoint; if (checkpoint.registry !== source || checkpoint.chainId !== options.chainId) fail("checkpoint does not match source registry or chain");
-    const provider = new JsonRpcProvider(options.rpcUrl, Number(options.chainId), { staticNetwork: true });
-    try { if ((await provider.getNetwork()).chainId !== BigInt(options.chainId)) fail("RPC chain ID does not match requested chain"); const head = await provider.getBlockNumber(); const target = head - Number(options.confirmations); if (target < 0) fail("confirmations exceed chain height"); const sourceRegistry = new Contract(source, registryAbi, provider); const [semaphore, groupId, sourceRoot, sourceSize] = await Promise.all([sourceRegistry.semaphore(), sourceRegistry.groupId(), new Contract(checkpoint.semaphore, semaphoreAbi, provider).getMerkleTreeRoot(checkpoint.groupId, { blockTag: target }), new Contract(checkpoint.semaphore, semaphoreAbi, provider).getMerkleTreeSize(checkpoint.groupId, { blockTag: target })]);
+    if (!isAddress(options.source)) fail("source registry address is invalid"); if (!/^https?:\/\//.test(options.rpcUrl) || /@/.test(options.rpcUrl)) fail("RPC URL must be absolute credential-free http(s)");
+    const chainId = typeof options.chainId === "string" ? options.chainId : String(options.chainId); const chainIdNumber = safeInteger(chainId, "chain ID", fail, true); const confirmations = safeInteger(options.confirmations, "confirmations", fail); const maxInsertionSlots = insertionBudget(options.maxInsertionSlots ?? DEFAULT_MAX_INSERTION_SLOTS, fail);
+    const source = getAddress(options.source); const checkpoint = readCheckpointFile(options.checkpoint, { maxInsertionSlots }).checkpoint; if (checkpoint.registry !== source || checkpoint.chainId !== chainId) fail("checkpoint does not match source registry or chain");
+    const provider = new JsonRpcProvider(options.rpcUrl, chainIdNumber, { staticNetwork: true });
+    try { if ((await provider.getNetwork()).chainId !== BigInt(chainId)) fail("RPC chain ID does not match requested chain"); const head = await provider.getBlockNumber(); const target = head - confirmations; if (target < 0) fail("confirmations exceed chain height"); const sourceRegistry = new Contract(source, registryAbi, provider); const [semaphore, groupId, sourceRoot, sourceSize] = await Promise.all([sourceRegistry.semaphore(), sourceRegistry.groupId(), new Contract(checkpoint.semaphore, semaphoreAbi, provider).getMerkleTreeRoot(checkpoint.groupId, { blockTag: target }), new Contract(checkpoint.semaphore, semaphoreAbi, provider).getMerkleTreeSize(checkpoint.groupId, { blockTag: target })]);
         const sourceMatches = getAddress(semaphore) === checkpoint.semaphore && groupId.toString() === checkpoint.groupId && sourceRoot.toString() === checkpoint.root && sourceSize.toString() === checkpoint.size;
         const key = stdinKey(fail); const wallet = new Wallet(key, provider); if (getAddress(wallet.address) !== options.expectedSigner) fail("stdin signer does not match --expected-signer"); const signer = new NonceManager(wallet); await signer.getNonce("pending"); const active = Group.import(checkpoint.groupExport).members.filter((m) => m !== 0n); const compact = new Group(active); const art = artifact(); let journal = null;
         if (existsSync(options.journal)) journal = readRotationJournal(options.journal);

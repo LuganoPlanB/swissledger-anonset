@@ -191,6 +191,13 @@ describe("anonset CLI client hardening", () => {
         assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--checkpoint", "one.json", "--checkpoint", "two.json").status, 2);
         assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--confirmations", "-1").status, 2);
         assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--confirmations", "0", "--confirmations", "1").status, 2);
+        const rotation = ["group", "rotate", "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--checkpoint", "checkpoint.json", "--journal", "journal.json", "--expected-signer", "0x0000000000000000000000000000000000000002"];
+        const unsafeRotationConfirmations = run(...rotation, "--confirmations", "9007199254740993");
+        assert.equal(unsafeRotationConfirmations.status, 2);
+        assert.match(unsafeRotationConfirmations.stderr, /confirmations.*safe integer/);
+        const unsafeRotationChain = run(...rotation.with(4, "9007199254740992"));
+        assert.equal(unsafeRotationChain.status, 2);
+        assert.match(unsafeRotationChain.stderr, /chain ID.*safe integer/);
         assert.equal(run("proof", "generate", identityFile(), "missing.json", "--checkpoint", "checkpoint.json").status, 2);
     });
 });
@@ -244,6 +251,9 @@ it("checkpoint persistence rejects unsafe or modified input and retains prior da
     assert.throws(() => readCheckpointFile(destination, { maxInsertionSlots: DEFAULT_MAX_INSERTION_SLOTS }), /hash/);
     writeFileSync(destination, "x".repeat(5000));
     assert.throws(() => readCheckpointFile(destination, { maxInsertionSlots: 1 }), /size policy/);
+    for (const budget of [NaN, Infinity, 0, 1.5, "2", MAX_INSERTION_SLOTS + 1]) {
+        assert.throws(() => readCheckpointFile(destination, { maxInsertionSlots: budget }), /max insertion slots/);
+    }
     const twoMembers = new Group([1n, 2n]);
     const twoMemberCheckpoint = createCheckpoint({ ...metadata, root: twoMembers.root.toString(), depth: String(twoMembers.depth), size: String(twoMembers.size), insertionSlots: "2", activeMembers: "2" }, twoMembers, 2);
     assert.throws(() => writeCheckpointFile(path.join(tmp, "over-budget.json"), twoMemberCheckpoint, { maxInsertionSlots: 1 }), /budget/);
