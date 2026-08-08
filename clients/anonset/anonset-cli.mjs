@@ -18,7 +18,7 @@ import { Group } from "@semaphore-protocol/group";
 import { generateProof, verifyProof } from "./proof-runtime.mjs";
 import { Contract, Interface, getAddress, isAddress, JsonRpcProvider, toBeHex, zeroPadValue } from "ethers";
 import { performance } from "node:perf_hooks";
-import { DEFAULT_MAX_INSERTION_SLOTS, MAX_INSERTION_SLOTS, MAX_TREE_DEPTH } from "./insertion-policy.mjs";
+import { DEFAULT_MAX_INSERTION_SLOTS, MAX_TREE_DEPTH, normalizeInsertionSlotBudget } from "./insertion-policy.mjs";
 import { CHECKPOINT_SCHEMA, createCheckpoint, readCheckpointFile, writeCheckpointFile } from "./checkpoint.mjs";
 import { parseRotationArguments, rotateGroup } from "./rotation.mjs";
 
@@ -116,10 +116,8 @@ export function parseInsertionSlotBudget(value) {
     if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) {
         fail("max insertion slots must be a positive safe integer");
     }
-    const budget = Number(value);
-    if (!Number.isSafeInteger(budget)) fail("max insertion slots must be a positive safe integer");
-    if (budget > MAX_INSERTION_SLOTS) fail(`max insertion slots cannot exceed ${MAX_INSERTION_SLOTS} for depth ${MAX_TREE_DEPTH}`);
-    return budget;
+    try { return normalizeInsertionSlotBudget(Number(value)); }
+    catch (error) { fail(error.message); }
 }
 
 function groupFromFile(filePath, maxInsertionSlots) {
