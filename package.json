@@ -4,8 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test clients/anonset/*.test.mjs",
+    "test": "node scripts/run-node-tests.mjs",
+    "test:client:unit": "node scripts/run-node-tests.mjs --phase=unit",
+    "test:client:proof": "node scripts/run-node-tests.mjs --phase=proof",
     "generate:build-info": "node scripts/generate-build-info.mjs",
+    "check:build-info": "node scripts/generate-build-info.mjs --check",
+    "test:artifact-compatibility": "node --test test/artifact-compatibility.test.mjs",
+    "check:artifact-compatibility": "node scripts/check-artifact-compatibility.mjs",
+    "reproducible-build": "node scripts/verify-reproducibility.mjs",
+    "check:dependencies": "node scripts/check-dependency-integrity.mjs",
+    "licenses": "node scripts/generate-license-report.mjs",
     "anonset": "node clients/anonset/anonset-cli.mjs",
     "generate-proof": "node clients/anonset/anonset-cli.mjs proof",
     "verify-proof": "node clients/anonset/anonset-cli.mjs verify",
@@ -14,24 +22,26 @@
     "release": "semantic-release"
   },
   "dependencies": {
-    "@semaphore-protocol/identity": "^4.14.2",
-    "@semaphore-protocol/group": "^4.14.2",
-    "@semaphore-protocol/proof": "^4.14.2",
-    "@semaphore-protocol/core": "^4.14.2",
-    "ethers": "^6.13.0"
+    "@semaphore-protocol/core": "4.14.3",
+    "@semaphore-protocol/group": "4.14.3",
+    "@semaphore-protocol/identity": "4.14.3",
+    "@semaphore-protocol/proof": "4.14.3",
+    "ethers": "6.17.0"
+  },
+  "overrides": {
+    "snarkjs": "0.7.5",
+    "underscore": "1.13.8",
+    "ws": "8.21.3"
   },
   "devDependencies": {
-    "@semaphore-protocol/contracts": "^4.14.2",
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/github": "11.0.6",
+    "@semantic-release/release-notes-generator": "14.1.0",
+    "@semaphore-protocol/contracts": "4.14.3",
     "@zk-kit/lean-imt.sol": "^2.0.1",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "poseidon-solidity": "^0.0.5",
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/commit-analyzer": "^13.0.1",
-    "@semantic-release/exec": "^7.1.0",
-    "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^11.0.6",
-    "@semantic-release/npm": "^12.0.2",
-    "@semantic-release/release-notes-generator": "^14.1.0",
-    "semantic-release": "^25.0.5"
+    "semantic-release": "25.0.5",
+    "solhint": "5.0.5"
   }
 }

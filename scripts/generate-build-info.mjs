@@ -1,15 +1,20 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
-const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+const packagePath = process.env.BUILD_INFO_PACKAGE || resolve(root, "package.json");
+const target = process.env.BUILD_INFO_TARGET || resolve(root, "src", "generated", "BuildInfo.sol");
+const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
 const version = pkg.version;
 
-if (!version || typeof version !== "string") {
-    process.stderr.write("Error: missing version in package.json\n");
-    process.exit(1);
+const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const match = typeof version === "string" ? semverPattern.exec(version) : null;
+const prereleaseIsValid = match?.[4]?.split(".").every((identifier) => !/^\d+$/.test(identifier) || /^(0|[1-9]\d*)$/.test(identifier)) ?? true;
+
+if (!match || !prereleaseIsValid) {
+    throw new Error("package version must be valid SemVer");
 }
 
 const output = `// SPDX-License-Identifier: MIT
@@ -21,6 +26,11 @@ library BuildInfo {
 }
 `;
 
-const target = resolve(root, "src", "generated", "BuildInfo.sol");
-writeFileSync(target, output);
+if (process.argv.includes("--check")) {
+    if (readFileSync(target, "utf8") !== output) throw new Error("BuildInfo drift: run npm run generate:build-info");
+} else {
+    const temporary = `${target}.${process.pid}.tmp`;
+    writeFileSync(temporary, output, { mode: 0o644 });
+    renameSync(temporary, target);
+}
 process.stdout.write(`BuildInfo → ${target} (v${version})\n`);

@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {MerkleRootRegistryZK} from "../src/MerkleRootRegistryZK.sol";
-import {Semaphore} from "@semaphore/contracts/Semaphore.sol";
-import {SemaphoreVerifier} from "@semaphore/contracts/base/SemaphoreVerifier.sol";
-import {ISemaphoreVerifier} from "@semaphore/contracts/interfaces/ISemaphoreVerifier.sol";
-import {Script} from "forge-std/Script.sol";
-
-bytes32 constant SALT = bytes32(0);
+import { MerkleRootRegistryZK } from "../src/MerkleRootRegistryZK.sol";
+import { Semaphore } from "@semaphore/contracts/Semaphore.sol";
+import { SemaphoreVerifier } from "@semaphore/contracts/base/SemaphoreVerifier.sol";
+import { ISemaphoreVerifier } from "@semaphore/contracts/interfaces/ISemaphoreVerifier.sol";
+import { Script } from "forge-std/Script.sol";
 
 /// @notice Deploys the full Semaphore stack + MerkleRootRegistryZK.
 ///
@@ -21,11 +19,7 @@ bytes32 constant SALT = bytes32(0);
 contract DeployMerkleRootRegistryZK is Script {
     function run()
         external
-        returns (
-            address registryAddr,
-            address semaphoreAddr,
-            address semaphoreVerifierAddr
-        )
+        returns (address registryAddr, address semaphoreAddr, address semaphoreVerifierAddr)
     {
         uint256 deployerPrivateKey = vm.envOr(
             "PRIVATE_KEY",
@@ -35,21 +29,35 @@ contract DeployMerkleRootRegistryZK is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy Groth16 verifier for Semaphore circuits
-        SemaphoreVerifier semaphoreVerifierContract = new SemaphoreVerifier{salt: SALT}();
+        SemaphoreVerifier semaphoreVerifierContract = new SemaphoreVerifier();
         semaphoreVerifierAddr = address(semaphoreVerifierContract);
 
         // 2. Deploy Semaphore (on-chain group + Merkle tree + proof router)
-        Semaphore semaphoreContract = new Semaphore{salt: SALT}(
-            ISemaphoreVerifier(semaphoreVerifierAddr)
-        );
+        Semaphore semaphoreContract = new Semaphore(ISemaphoreVerifier(semaphoreVerifierAddr));
         semaphoreAddr = address(semaphoreContract);
 
         // 3. Deploy MerkleRootRegistryZK (creates its own group inside Semaphore)
-        MerkleRootRegistryZK registryContract = new MerkleRootRegistryZK{salt: SALT}(
-            semaphoreAddr
-        );
+        MerkleRootRegistryZK registryContract = new MerkleRootRegistryZK(semaphoreAddr);
         registryAddr = address(registryContract);
 
         vm.stopBroadcast();
+
+        string memory manifestPath = vm.envOr("DEPLOY_MANIFEST", string(""));
+        if (bytes(manifestPath).length != 0) {
+            vm.writeFile(
+                manifestPath,
+                string.concat(
+                    "{\"chainId\":",
+                    vm.toString(block.chainid),
+                    ",\"registry\":\"",
+                    vm.toString(registryAddr),
+                    "\",\"semaphore\":\"",
+                    vm.toString(semaphoreAddr),
+                    "\",\"semaphoreVerifier\":\"",
+                    vm.toString(semaphoreVerifierAddr),
+                    "\"}"
+                )
+            );
+        }
     }
 }

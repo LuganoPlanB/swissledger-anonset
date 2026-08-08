@@ -1,56 +1,138 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-# End-to-end smoke test using a local Anvil node.
-#
-# 1. Start Anvil
-# 2. Deploy MerkleRootRegistryZK + Semaphore stack
-# 3. Add members
-# 4. Verify on-chain with a known proof
-# 5. Stop Anvil
-
+# Local-only protocol smoke.  It never reads credentials or contacts a public RPC.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-cd "$PROJECT_DIR"
-
+FORGE="$PROJECT_DIR/bin/swissledger-forge"
+CAST="$PROJECT_DIR/bin/swissledger-cast"
+ANVIL="$PROJECT_DIR/bin/swissledger-anvil"
+KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+mkdir -p "$PROJECT_DIR/out"
+TMP_DIR="$(mktemp -d "$PROJECT_DIR/out/anonset-smoke.XXXXXX")"
 ANVIL_PID=""
-cleanup() {
-    if [ -n "$ANVIL_PID" ]; then
-        kill "$ANVIL_PID" 2>/dev/null || true
-    fi
+RECEIPTS="$TMP_DIR/receipts.ndjson"
+
+die() { printf 'smoke: %s\n' "$*" >&2; exit 1; }
+send_checked() {
+    local label=$1 sent hash receipt
+    shift
+    sent="$("$CAST" send --json "$@")"
+    hash="$(node -e 'const value=JSON.parse(process.argv[1]); if (!/^0x[0-9a-f]{64}$/i.test(value.transactionHash ?? "")) process.exit(1); console.log(value.transactionHash)' "$sent")" || die "$label did not return a transaction hash"
+    receipt="$("$CAST" receipt --json "$hash" --rpc-url "$RPC_URL")"
+    node -e 'const [label, hash, receipt] = process.argv.slice(1); const value=JSON.parse(receipt); if (value.status !== "0x1") process.exit(1); console.log(JSON.stringify({label, transactionHash:hash, status:value.status, gasUsed:value.gasUsed}))' "$label" "$hash" "$receipt" >>"$RECEIPTS" || die "$label transaction reverted"
 }
-trap cleanup EXIT
+cleanup() {
+    if [[ -n "$ANVIL_PID" ]] && kill -0 "$ANVIL_PID" 2>/dev/null; then kill "$ANVIL_PID" 2>/dev/null || true; wait "$ANVIL_PID" 2>/dev/null || true; fi
+    rm -rf -- "$TMP_DIR"
+}
+trap cleanup EXIT HUP INT TERM
+for binary in "$FORGE" "$CAST" "$ANVIL"; do [[ -x "$binary" ]] || die "missing pinned tool $binary; run make toolchain-install"; done
 
-echo "==> Starting Anvil..."
-anvil --port 8545 &
+PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+RPC_URL="http://127.0.0.1:$PORT"
+MANIFEST="$TMP_DIR/manifest.json"
+"$ANVIL" --port "$PORT" --gas-price 0 --block-base-fee-per-gas 0 >"$TMP_DIR/anvil.log" 2>&1 &
 ANVIL_PID=$!
-sleep 2
+if [[ -n ${ANONSET_SMOKE_PID_FILE:-} ]]; then printf '%s %s\n' "$ANVIL_PID" "$PORT" >"$ANONSET_SMOKE_PID_FILE"; fi
+for _ in $(seq 1 50); do "$CAST" chain-id --rpc-url "$RPC_URL" >/dev/null 2>&1 && break; sleep 0.1; done
+"$CAST" chain-id --rpc-url "$RPC_URL" >/dev/null 2>&1 || die "Anvil did not become ready"
+[[ ${ANONSET_SMOKE_FAIL_AFTER_READY:-0} != 1 ]] || die "injected failure after Anvil readiness"
 
-echo "==> Deploying contracts..."
-DEPLOY_OUTPUT=$(forge script script/DeployMerkleRootRegistryZK.s.sol \
-    --rpc-url http://127.0.0.1:8545 \
-    --broadcast \
-    --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
-    2>&1)
+DEPLOY_MANIFEST="$MANIFEST" PRIVATE_KEY="$KEY" "$FORGE" script script/DeployMerkleRootRegistryZK.s.sol --rpc-url "$RPC_URL" --broadcast --private-key "$KEY" --legacy --gas-price 0 >/dev/null
+node --input-type=module - "$MANIFEST" "$RPC_URL" "$TMP_DIR/deployment-evidence.json" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+const [manifestPath, rpcUrl, evidencePath] = process.argv.slice(2);
+function deployment(value) { if (typeof value === "string") { try { return deployment(JSON.parse(value)); } catch { return undefined; } } if (value && typeof value === "object") { if ("chainId" in value) return value; for (const child of Object.values(value)) { const found = deployment(child); if (found) return found; } } return undefined; }
+const rawManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+const manifest = deployment(rawManifest);
+if (!manifest) throw new Error(`deployment manifest has no chainId (${Object.keys(rawManifest).join(",")})`);
+if (BigInt(manifest.chainId) !== 31337n || ![manifest.registry, manifest.semaphore, manifest.semaphoreVerifier].every((value) => /^0x[0-9a-f]{40}$/i.test(String(value)))) throw new Error("invalid deployment manifest");
+const addresses = [manifest.registry, manifest.semaphore, manifest.semaphoreVerifier];
+const bytecode = {};
+for (const address of addresses) {
+  const response = await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: address, method: "eth_getCode", params: [address, "latest"] }) });
+  const payload = await response.json(); if (!/^0x[0-9a-f]{2,}$/i.test(payload.result)) throw new Error("deployed bytecode missing");
+  bytecode[address] = createHash("sha256").update(payload.result).digest("hex");
+}
+const rpc = async (method, params) => { const response = await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: method, method, params }) }); return (await response.json()).result; };
+const latest = Number(BigInt(await rpc("eth_blockNumber", [])));
+const pending = new Set(addresses.map((address) => address.toLowerCase())); const receipts = [];
+for (let block = 0; block <= latest && pending.size; block += 1) for (const transaction of (await rpc("eth_getBlockByNumber", [`0x${block.toString(16)}`, true])).transactions) {
+  const receipt = await rpc("eth_getTransactionReceipt", [transaction.hash]);
+  if (receipt?.contractAddress && pending.delete(receipt.contractAddress.toLowerCase())) receipts.push({ transactionHash: transaction.hash, contractAddress: receipt.contractAddress, status: receipt.status, gasUsed: receipt.gasUsed });
+}
+if (receipts.length !== 3 || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("deployment receipt validation failed");
+writeFileSync(evidencePath, JSON.stringify({ bytecode, receipts }));
+NODE
+REGISTRY="$(node -e 'const raw=JSON.parse(require("fs").readFileSync(process.argv[1])); const walk=(v)=>{if(typeof v==="string"){try{return walk(JSON.parse(v))}catch{return}} return v&&typeof v==="object"?(v.chainId?v:Object.values(v).map(walk).find(Boolean)):undefined}; console.log(walk(raw).registry)' "$MANIFEST")"
+GROUP_ID="$("$CAST" call "$REGISTRY" 'groupId()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
+OWNER="$("$CAST" call "$REGISTRY" 'owner()(address)' --rpc-url "$RPC_URL")"
+[[ "${OWNER,,}" == "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266" ]] || die "deployment owner does not match the local Anvil sender ($OWNER)"
 
-REGISTRY_ADDR=$(echo "$DEPLOY_OUTPUT" | grep "registryAddr:" | awk '{print $NF}')
-echo "==> Registry deployed at: $REGISTRY_ADDR"
-
-echo "==> Adding test members..."
-# Add a known commitment
-COMMITMENT="11005642493773047649202648265396872197147567800455247120861783398111750817516"
-cast send "$REGISTRY_ADDR" "addMember(uint256)" "$COMMITMENT" \
-    --rpc-url http://127.0.0.1:8545 \
-    --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
-    --gas-limit 200000
-
-echo "==> Checking member count..."
-COUNT=$(cast call "$REGISTRY_ADDR" "memberCount()(uint256)" --rpc-url http://127.0.0.1:8545)
-echo "==> Members: $COUNT"
-
-echo "==> Checking active root..."
-ROOT=$(cast call "$REGISTRY_ADDR" "activeRoot()(uint256)" --rpc-url http://127.0.0.1:8545)
-echo "==> Active root: $ROOT"
-
-echo "==> Smoke test passed."
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/identity.json" "$(printf '1%.0s' {1..64})" >"$TMP_DIR/identity-result.json"
+COMMITMENT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/identity-result.json")"
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/identity-two.json" "$(printf '2%.0s' {1..64})" >"$TMP_DIR/identity-two-result.json"
+SECOND_COMMITMENT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/identity-two-result.json")"
+printf '{"members":["%s","%s"]}\n' "$COMMITMENT" "$SECOND_COMMITMENT" >"$TMP_DIR/group.json"
+send_checked add-member-one "$REGISTRY" 'addMember(uint256)' "$COMMITMENT" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+send_checked add-member-two "$REGISTRY" 'addMembers(uint256[])' "[$SECOND_COMMITMENT]" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+COUNT_BEFORE_REMOVE="$("$CAST" call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
+ROOT_BEFORE_REMOVE="$("$CAST" call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
+LOCAL_ROOT="$(node --input-type=module - "$TMP_DIR/group.json" <<'NODE'
+import { readFileSync } from "node:fs";
+import { Group } from "@semaphore-protocol/group";
+console.log(new Group(JSON.parse(readFileSync(process.argv[2], "utf8")).members.map(BigInt)).root.toString());
+NODE
+)"
+[[ "$ROOT_BEFORE_REMOVE" == "$LOCAL_ROOT" ]] || die "off-chain group root does not match deployed Semaphore root (on-chain $ROOT_BEFORE_REMOVE, client $LOCAL_ROOT)"
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 >"$TMP_DIR/proof.json"
+mapfile -t PROOF < <(node - "$TMP_DIR/proof.json" <<'NODE'
+const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
+if (!Number.isFinite(p.metrics?.totalMs) || !Number.isFinite(p.metrics?.reconstructionMs) ||
+    !/^[0-9]+$/.test(p.gasEstimates?.verifyMembership ?? "") || !/^[0-9]+$/.test(p.gasEstimates?.validateMembership ?? "") ||
+    p.chain?.eventCount !== 2 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 2 ||
+    /privateKey|commitment|memberIndex/i.test(JSON.stringify(p))) throw new Error("invalid or privacy-unsafe chain proof metrics");
+console.log([p.merkleTreeDepth, p.merkleTreeRoot, p.nullifier, p.message, `[${p.points.join(",")}]`].join("\n"));
+NODE
+)
+for attempt in 1 2; do send_checked "verify-membership-$attempt" "$REGISTRY" 'verifyMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 1000000; done
+send_checked validate-membership "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 1000000
+if "$CAST" call "$REGISTRY" 'validateMembership(uint256,uint256,uint256,uint256,uint256[8])' "${PROOF[0]}" "${PROOF[1]}" "${PROOF[2]}" "${PROOF[3]}" "${PROOF[4]}" --rpc-url "$RPC_URL" >/dev/null 2>&1; then die "replayed protected proof unexpectedly succeeded"; fi
+MANAGER="$("$CAST" call "$REGISTRY" 'isMemberManager(address)(bool)' "$OWNER" --rpc-url "$RPC_URL")"
+VERSION="$("$CAST" call "$REGISTRY" 'version()(string)' --rpc-url "$RPC_URL")"
+[[ "$MANAGER" == "true" && -n "$VERSION" ]] || die "registry owner, manager, or version assertion failed"
+SIBLINGS="$(node --input-type=module - "$TMP_DIR/group.json" <<'NODE'
+import { readFileSync } from "node:fs";
+import { Group } from "@semaphore-protocol/group";
+const group = new Group(JSON.parse(readFileSync(process.argv[2], "utf8")).members.map(BigInt));
+console.log(`[${group.generateMerkleProof(0).siblings.map(String).join(",")}]`);
+NODE
+)"
+"$CAST" call "$REGISTRY" 'removeMember(uint256,uint256[])' "$COMMITMENT" "$SIBLINGS" --from "$OWNER" --rpc-url "$RPC_URL" >/dev/null
+send_checked remove-member "$REGISTRY" 'removeMember(uint256,uint256[])' "$COMMITMENT" "$SIBLINGS" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 500000
+COUNT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
+ROOT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
+[[ "$COUNT_AFTER_REMOVE" -le "$COUNT_BEFORE_REMOVE" && "$ROOT_AFTER_REMOVE" != "$ROOT_BEFORE_REMOVE" ]] || die "member removal did not produce the expected count/root transition"
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 0 >"$TMP_DIR/post-remove-proof.json"
+node - "$TMP_DIR/post-remove-proof.json" "$ROOT_AFTER_REMOVE" <<'NODE'
+const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
+if (p.chain?.eventCount !== 3 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 1 ||
+    p.merkleTreeRoot !== process.argv[3]) throw new Error("removed-member reconstruction did not match current state");
+NODE
+POST_REMOVE_VERIFICATION="$(node clients/anonset/anonset-cli.mjs verify local "$TMP_DIR/post-remove-proof.json")"
+node -e 'if (JSON.parse(process.argv[1]).ok !== true) process.exit(1)' "$POST_REMOVE_VERIFICATION" || die "post-removal reconstructed proof did not verify locally"
+node --input-type=module - "$MANIFEST" "$TMP_DIR/deployment-evidence.json" "$RECEIPTS" "$REGISTRY" "$GROUP_ID" "$TMP_DIR/proof.json" "$TMP_DIR/post-remove-proof.json" <<'NODE'
+import { readFileSync } from "node:fs";
+const [manifestPath, deploymentEvidencePath, receiptsPath, registry, groupId, proofPath, postRemoveProofPath] = process.argv.slice(2);
+function deployment(value) { if (typeof value === "string") { try { return deployment(JSON.parse(value)); } catch { return undefined; } } if (value && typeof value === "object") { if ("chainId" in value) return value; for (const child of Object.values(value)) { const found = deployment(child); if (found) return found; } } return undefined; }
+const manifest = deployment(JSON.parse(readFileSync(manifestPath, "utf8")));
+if (manifest.registry.toLowerCase() !== registry.toLowerCase() || !/^[0-9]+$/.test(groupId)) throw new Error("manifest wiring mismatch");
+const receipts = readFileSync(receiptsPath, "utf8").trim().split("\n").map(JSON.parse);
+if (receipts.length !== 6 || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("incomplete state-changing receipt manifest");
+const summarize = (proofPath) => { const { chain, metrics, gasEstimates } = JSON.parse(readFileSync(proofPath, "utf8")); return { chain, metrics, gasEstimates }; };
+console.log(JSON.stringify({ deployment: manifest, deploymentEvidence: JSON.parse(readFileSync(deploymentEvidencePath, "utf8")), transactions: receipts, chainProof: summarize(proofPath), postRemovalChainProof: summarize(postRemoveProofPath) }));
+NODE

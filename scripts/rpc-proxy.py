@@ -39,7 +39,12 @@ class RpcProxy(http.server.BaseHTTPRequestHandler):
             req = urllib.request.Request(
                 self.target_url,
                 data=modified_body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    # The SwissLedger testnet WAF rejects urllib's default
+                    # Python-urllib user agent (HTTP 403 / error 1010).
+                    "User-Agent": "swissledger-anonset-rpc-proxy/1.0",
+                },
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 response_body = resp.read()
