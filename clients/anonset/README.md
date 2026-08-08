@@ -20,6 +20,7 @@ npm run anonset -- --help
 anonset-cli identity create <identity.json> [private-key-hex] [--force]
 anonset-cli proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>]
 anonset-cli proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>]
+anonset-cli group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--max-insertion-slots <n>] [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>] [--confirmations <n>] [--gas-price <n>] [--deploy-gas-limit <n>] [--batch-gas-limit <n>]
 anonset-cli verify local <proof.json>
 anonset-cli verify on-chain <address> <proof.json> <rpc-url> <chain-id>
 ```

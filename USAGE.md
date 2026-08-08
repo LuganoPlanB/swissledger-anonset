@@ -24,6 +24,10 @@ procedures live under `docs/`.
 - Local and chain-222 release evidence is green. Canonical chain-110 promotion
   still requires an external Solidity/ZK audit, production multisig/key
   governance, and an authorized manual change.
+- The current code locally passes the complete gate with a 65,536 insertion
+  default, progressive reorg-safe checkpoints, and resumable registry/group
+  rotation. These additions do not retroactively change the dated chain-222
+  evidence above.
 
 Treat the workflow artifact, rather than this dated summary, as authoritative
 for the latest commit, deployed addresses, receipts, hashes, gas, and timings.
@@ -54,10 +58,12 @@ for the latest commit, deployed addresses, receipts, hashes, gas, and timings.
 | Vendored linked library | `vendor/poseidon-solidity/PoseidonT3.sol` |
 | Solidity unit/fuzz tests | `test/MerkleRootRegistryZK.t.sol` |
 | Client and real proof tests | `clients/anonset/anonset-cli.mjs`, `clients/anonset/anonset.test.mjs` |
+| Checkpoint and rotation implementation | `clients/anonset/checkpoint.mjs`, `clients/anonset/rotation.mjs` |
 | Local protocol smoke | `scripts/e2e-smoke`, `test/e2e-smoke.test.sh` |
 | Protected testnet path | `scripts/testnet-deploy`, `scripts/testnet-zk-smoke`, `scripts/testnet-evidence.mjs` |
 | CI and release boundaries | `.github/workflows/test.yml`, `.github/workflows/release.yml` |
 | Operator procedures | `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/READINESS.md` |
+| Script catalog | `scripts/README.md` |
 
 ## Standard workflow
 
@@ -82,6 +88,7 @@ make build
 make test-client
 make test-solidity
 make test-smoke
+make test-rotation
 make artifact-compatibility
 make reproducible-build
 make coverage
@@ -104,13 +111,22 @@ updating documented numbers.
 ## Client contract
 
 ```bash
-npm run anonset -- identity create identity.json
-npm run anonset -- proof generate identity.json group.json 0 <group-id>
-npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> 0 [from-block] [--checkpoint <file>] [--confirmations <n>]
-npm run anonset -- group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>]
-npm run anonset -- verify local proof.json
-npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
+npm run anonset -- identity create <identity.json> [private-key-hex] [--force]
+npm run anonset -- proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>]
+npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>]
+npm run anonset -- group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--max-insertion-slots <n>] [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>] [--confirmations <n>] [--gas-price <n>] [--deploy-gas-limit <n>] [--batch-gas-limit <n>]
+npm run anonset -- verify local <proof.json>
+npm run anonset -- verify on-chain <address> <proof.json> <rpc-url> <chain-id>
 ```
+
+| Command | Contract for agents |
+|---|---|
+| `identity create` | Atomic 0600 identity file; replacement requires `--force`. A supplied private key is sensitive argv, so prefer generated identities or a protected caller. |
+| `proof generate` | Local identity plus `group.json`; defaults message/scope to `0`; 65,536 insertion slots unless explicitly overridden. |
+| `proof generate-chain` | Identity file or bounded secret stdin (`-`); canonical event replay; exact chain/root/depth/size validation; optional progressive checkpoint and confirmations. |
+| `verify local` | Local Groth16 verification only; no RPC. |
+| `verify on-chain` | Read-only reusable `verifyMembership.staticCall`; no replay protection and no transaction/event. |
+| `group rotate` | Signing key only on bounded stdin; expected signer mandatory; immutable source checkpoint plus atomic 0600 journal; deploys a new registry against the existing Semaphore and migrates active leaves in batches of at most 64. |
 
 Identity files are owner-only, atomic, size-limited, regular files. Secret data
 must never reach standard output or errors. Preserve stable exit classes:
@@ -128,6 +144,27 @@ Use `--checkpoint <file>` for an atomically written, public cache. It is only
 used after its block anchor and historical group state validate; otherwise the
 command rebuilds trusted complete history. Successful output includes a
 redacted `checkpoint` descriptor and checkpoint timings.
+
+Checkpoint identity mismatches are file errors and must never overwrite an
+unrelated cache. An identity-matching checkpoint whose saved block anchor or
+historical state diverged is rebuilt from complete trusted history and reported
+as `rebuilt-after-reorg`. Successful runs atomically return the next checkpoint
+for future delta replay. The default insertion budget is 65,536; the strict
+`--max-insertion-slots` override may authorize up to 4,294,967,296 positions.
+
+Rotation never mutates, prunes, or resets the source registry. Journal states
+include preparation/deployment/migration, `AWAITING_OWNER_ACCEPTANCE`, `READY`,
+and terminal `ABORTED_SOURCE_CHANGED`. Rerun the identical command to resume;
+confirmed deployment, batches, managers, and ownership initiation are not
+duplicated. A distinct target owner must separately submit `acceptOwnership()`;
+`AWAITING_OWNER_ACCEPTANCE` is not completion. Output contains only public
+registry/group IDs, journal state, receipts, gas, and observed durations.
+
+Stable CLI exits: usage/input `2`, local file/proof/checkpoint `3`, RPC/chain
+`4`. JSON results go to stdout; diagnostics go to stderr. Never add identity
+commitments or leaf indices to chain-proof output because that links a proof to
+a public member. Exact helper-script inputs and outputs are cataloged in
+`scripts/README.md`.
 
 ## CI and evidence contract
 

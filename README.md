@@ -6,10 +6,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Swissledger AnonSet
 
-Anonymous Semaphore v4 membership on SwissLedger. This repository provides a
-single Semaphore group, a Node.js proof client, a pinned Istanbul-compatible
-toolchain, local protocol smoke coverage, and a protected fresh-testnet CI
-workflow. It does **not** designate a canonical production deployment.
+Anonymous Semaphore v4 membership on SwissLedger. Each registry manages one
+Semaphore group; applications can rotate active members into a new compact
+registry/group without changing the shared Semaphore deployment. The repository
+provides a Node.js proof and rotation client, verified progressive tree
+checkpoints, a pinned Istanbul-compatible toolchain, local protocol smoke
+coverage, and a protected fresh-testnet CI workflow. It does **not** designate
+a canonical production deployment.
 
 ## Start here
 
@@ -49,13 +52,21 @@ This establishes local and testnet release readiness. It is not approval for a
 canonical chain-110 deployment: the external Solidity/ZK audit, production
 multisig/key governance, and manual promotion approval remain required.
 
+The current code adds three locally verified features after that
+protected-workflow snapshot: a 65,536-slot default reconstruction budget,
+reorg-safe progressive `Group.export()` checkpoints, and resumable group
+rotation into a new registry attached to the existing Semaphore. The complete
+post-change `make test` gate passed; the dated protected-workflow artifact above
+remains authoritative for its own chain-222 deployment.
+
 ### Test and coverage measurements
 
-The verified gate includes 23 repository Node tests, 6 hardened CLI tests,
-4 real Groth16 proof-integration tests, 42 Solidity tests, two 256-run Solidity
-fuzz tests, ShellCheck, dependency and artifact-integrity gates, and repeated
-and parallel local smoke tests with injected-failure cleanup. Production
-`npm audit` reported zero findings.
+The current gate includes 10 hardened CLI command tests, 4 real Groth16
+proof-integration tests, checkpoint/replay tests, 42 Solidity tests, two
+256-run Solidity fuzz tests, ShellCheck, dependency and artifact-integrity
+gates, repeated and parallel local smoke tests with injected-failure cleanup,
+and a dedicated 65-member/two-batch rotation scenario. Production `npm audit`
+reported zero findings.
 
 | Solidity coverage scope | Lines | Statements | Branches | Functions |
 |---|---:|---:|---:|---:|
@@ -104,6 +115,21 @@ estimated 85,963 and 293,845 gas respectively, illustrating that
 `eth_estimateGas` is advisory: signed receipt `gasUsed` is the authoritative
 measurement and applications must retain an appropriate transaction gas
 margin.
+
+A synthetic replay of **65,536 insertion slots** completed in **30.623 s** and
+increased resident memory by approximately **420 MB** on the observed local
+runner. This is a capacity observation, not an SLA. Progressive checkpoints
+normally avoid paying that full replay cost again: a validated checkpoint
+imports the public tree, replays only later canonical events, and records load,
+event, reconstruction, write, proof, and total timings in its descriptor. The
+descriptor reports `resumed` for a valid delta replay and
+`rebuilt-after-reorg` when a matching checkpoint's saved anchor or historical
+state no longer belongs to the canonical chain. An identity mismatch is a hard
+file error and never overwrites another chain/group's cache. The dedicated
+rotation smoke migrates **65 active members in two batches** and
+returns actual per-transaction receipt gas and send-to-receipt durations; run
+`make test-rotation` to measure the current machine rather than treating a local
+Anvil duration as a network forecast.
 
 ## Application integration and proof semantics
 
@@ -297,9 +323,11 @@ Use the current tree where possible. Semaphore accepts the current root and,
 for groups created by this registry, historical roots for one hour. A proof
 generated from an older snapshot will revert after that root expires.
 
-The bundled CLI currently accepts a `group.json` containing 1–1,024 commitments
-and also provides a chain-reconstruction command for 1–1,024 insertion slots.
-With only the identity secret and public chain coordinates, use:
+Both proof-generation commands default to at most **65,536 insertion slots**.
+Use `--max-insertion-slots <n>` for an explicit larger budget up to the
+depth-32 ceiling of 4,294,967,296; the option authorizes memory and replay work,
+not extra on-chain capacity. With only the identity secret and public chain
+coordinates, use:
 
 ```bash
 # Preferred: owner-only identity file.
@@ -425,16 +453,35 @@ The current handoff status and explicit external blockers are in
 
 ## Client
 
+The CLI always writes one JSON result to standard output and diagnostics to
+standard error. Exit classes are stable: `2` for usage/input, `3` for local
+file/proof/checkpoint errors, and `4` for RPC/chain errors. Identity files,
+checkpoints, and rotation journals are written atomically; secret identity
+material is never included in checkpoint, journal, proof descriptor, or
+benchmark output.
+
+| Command | Purpose | Primary output |
+|---|---|---|
+| `identity create` | Create an owner-only Semaphore identity file; requires `--force` to replace it. | Public commitment and identity-file descriptor |
+| `proof generate` | Generate a proof from an identity file and an already reconstructed `group.json`. | Semaphore proof JSON |
+| `proof generate-chain` | Reconstruct or progressively resume the public group from chain events, validate it on-chain, and generate a proof. | Proof plus chain/checkpoint/timing/gas-estimate descriptors |
+| `verify local` | Verify proof JSON with the local Semaphore proof library. | `{ "ok": true|false }` |
+| `verify on-chain` | Read-only `staticCall` to reusable `verifyMembership`; it sends no transaction. | `{ "ok": true|false }` |
+| `group rotate` | Compact active commitments into a new registry/group using the existing Semaphore and a resumable 0600 journal. | New registry/group IDs, state, receipts, gas and duration measurements |
+
 ```bash
-npm run anonset -- identity create identity.json
-npm run anonset -- proof generate-chain identity.json <registry-address> <rpc-url> <chain-id> 0
-npm run anonset -- proof generate identity.json group.json 0 <group-id>
-npm run anonset -- verify local proof.json
-npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
+npm run anonset -- identity create <identity.json> [private-key-hex] [--force]
+npm run anonset -- proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>]
+npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>]
+npm run anonset -- verify local <proof.json>
+npm run anonset -- verify on-chain <address> <proof.json> <rpc-url> <chain-id>
+npm run anonset -- group rotate <source-registry> <rpc-url> <chain-id> --checkpoint <file> --journal <file> --expected-signer <address> [--max-insertion-slots <n>] [--target-owner <address>] [--manager <address> ...] [--batch-size <1..64>] [--confirmations <n>] [--gas-price <n>] [--deploy-gas-limit <n>] [--batch-gas-limit <n>]
 ```
 
 See [clients/anonset/README.md](clients/anonset/README.md) for exact argument
-rules, safe identity handling, and local/on-chain verification.
+rules, safe identity handling, checkpoint/rotation states, and local/on-chain
+verification. See [scripts/README.md](scripts/README.md) for the build,
+deployment, evidence, smoke, and release helper catalog.
 
 ## Versioning and release
 
