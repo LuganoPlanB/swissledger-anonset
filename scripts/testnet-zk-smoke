@@ -49,7 +49,7 @@ ROOT="$($CAST call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL")"
 printf '{"members":["%s","%s"]}\n' "$ONE" "$TWO" >"$TMP_DIR/group.json"
 PROOF_STARTED_MS="$(node -e 'process.stdout.write(String(Date.now()))')"
 node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/one.json" |
-    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 222 0 >"$TMP_DIR/proof.json"
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 222 0 --checkpoint "$TMP_DIR/group.checkpoint.json" >"$TMP_DIR/proof.json"
 PROOF_GENERATION_MS="$(node -e 'process.stdout.write(String(Date.now()-Number(process.argv[1])))' "$PROOF_STARTED_MS")"
 mapfile -t PROOF < <(node - "$TMP_DIR/proof.json" <<'NODE'
 const p=JSON.parse(require('fs').readFileSync(process.argv[2])); console.log([p.merkleTreeDepth,p.merkleTreeRoot,p.nullifier,p.message,`[${p.points.join(',')}]`].join('\n'));
@@ -76,5 +76,7 @@ const [output,registry,owner,count,root,countAfter,rootAfter,receiptsPath,identi
 const transactions=require('fs').readFileSync(receiptsPath,'utf8').trim().split('\n').map(JSON.parse);
 if(transactions.length!==6) throw new Error('missing state-changing receipts');
 const proof=JSON.parse(require('fs').readFileSync(proofPath,'utf8'));
-require('fs').writeFileSync(output,JSON.stringify({schema:1,registry,owner,count,root,countAfter,rootAfter,transactions,timings:{identitySetupMs:Number(identitySetupMs),proofGenerationMs:Number(proofGenerationMs),totalObservedMs:Number(totalObservedMs),chainProof:proof.metrics},gasEstimates:proof.gasEstimates,reconstruction:{fromBlock:proof.chain.fromBlock,toBlock:proof.chain.toBlock,eventCount:proof.chain.eventCount,insertionSlots:proof.chain.insertionSlots,activeMembers:proof.chain.activeMembers},verifyReusable:true,validateReplayRejected:true,tamperedRejected:true,memberRemoval:true}));
+const checkpoint=proof.checkpoint;
+if (!checkpoint || checkpoint.persisted !== true || checkpoint.mode !== 'full' || !Number.isFinite(proof.metrics?.checkpointLoadMs) || !Number.isFinite(proof.metrics?.checkpointWriteMs)) throw new Error('invalid checkpoint evidence');
+require('fs').writeFileSync(output,JSON.stringify({schema:1,registry,owner,count,root,countAfter,rootAfter,transactions,timings:{identitySetupMs:Number(identitySetupMs),proofGenerationMs:Number(proofGenerationMs),totalObservedMs:Number(totalObservedMs),chainProof:proof.metrics},checkpoint,gasEstimates:proof.gasEstimates,reconstruction:{fromBlock:proof.chain.fromBlock,toBlock:proof.chain.toBlock,eventCount:proof.chain.eventCount,insertionSlots:proof.chain.insertionSlots,activeMembers:proof.chain.activeMembers},verifyReusable:true,validateReplayRejected:true,tamperedRejected:true,memberRemoval:true}));
 NODE

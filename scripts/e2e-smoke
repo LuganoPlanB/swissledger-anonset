@@ -88,12 +88,13 @@ NODE
 )"
 [[ "$ROOT_BEFORE_REMOVE" == "$LOCAL_ROOT" ]] || die "off-chain group root does not match deployed Semaphore root (on-chain $ROOT_BEFORE_REMOVE, client $LOCAL_ROOT)"
 node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity.json" |
-    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 >"$TMP_DIR/proof.json"
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 --checkpoint "$TMP_DIR/group.checkpoint.json" >"$TMP_DIR/proof.json"
 mapfile -t PROOF < <(node - "$TMP_DIR/proof.json" <<'NODE'
 const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
-if (!Number.isFinite(p.metrics?.totalMs) || !Number.isFinite(p.metrics?.reconstructionMs) ||
+if (!Number.isFinite(p.metrics?.totalMs) || !Number.isFinite(p.metrics?.reconstructionMs) || !Number.isFinite(p.metrics?.checkpointLoadMs) || !Number.isFinite(p.metrics?.checkpointWriteMs) ||
     !/^[0-9]+$/.test(p.gasEstimates?.verifyMembership ?? "") || !/^[0-9]+$/.test(p.gasEstimates?.validateMembership ?? "") ||
     p.chain?.eventCount !== 2 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 2 ||
+    p.checkpoint?.mode !== "full" || p.checkpoint?.persisted !== true || p.checkpoint?.deltaEvents !== 2 ||
     /privateKey|commitment|memberIndex/i.test(JSON.stringify(p))) throw new Error("invalid or privacy-unsafe chain proof metrics");
 console.log([p.merkleTreeDepth, p.merkleTreeRoot, p.nullifier, p.message, `[${p.points.join(",")}]`].join("\n"));
 NODE
@@ -117,22 +118,57 @@ COUNT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'memberCount()(uint256)' --rpc-ur
 ROOT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
 [[ "$COUNT_AFTER_REMOVE" -le "$COUNT_BEFORE_REMOVE" && "$ROOT_AFTER_REMOVE" != "$ROOT_BEFORE_REMOVE" ]] || die "member removal did not produce the expected count/root transition"
 node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
-    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 0 >"$TMP_DIR/post-remove-proof.json"
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 --checkpoint "$TMP_DIR/group.checkpoint.json" >"$TMP_DIR/post-remove-proof.json"
 node - "$TMP_DIR/post-remove-proof.json" "$ROOT_AFTER_REMOVE" <<'NODE'
 const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
-if (p.chain?.eventCount !== 3 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 1 ||
+if (p.chain?.eventCount !== 1 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 1 ||
+    p.checkpoint?.mode !== "resumed" || p.checkpoint?.deltaEvents !== 1 ||
     p.merkleTreeRoot !== process.argv[3]) throw new Error("removed-member reconstruction did not match current state");
+NODE
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 >"$TMP_DIR/post-remove-clean-proof.json"
+node - "$TMP_DIR/post-remove-proof.json" "$TMP_DIR/post-remove-clean-proof.json" <<'NODE'
+const [resumed, clean] = process.argv.slice(2).map((file) => JSON.parse(require("fs").readFileSync(file)));
+if (clean.checkpoint?.mode !== "unpersisted" || resumed.merkleTreeRoot !== clean.merkleTreeRoot ||
+    resumed.merkleTreeDepth !== clean.merkleTreeDepth || resumed.scope !== clean.scope) {
+  throw new Error("resumed proof does not match clean reconstruction");
+}
 NODE
 POST_REMOVE_VERIFICATION="$(node clients/anonset/anonset-cli.mjs verify local "$TMP_DIR/post-remove-proof.json")"
 node -e 'if (JSON.parse(process.argv[1]).ok !== true) process.exit(1)' "$POST_REMOVE_VERIFICATION" || die "post-removal reconstructed proof did not verify locally"
+# A checkpoint advanced on an orphaned branch must never be resumed on a
+# divergent replacement branch, even when the replacement reaches its height.
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/identity-three.json" "$(printf '3%.0s' {1..64})" >"$TMP_DIR/identity-three-result.json"
+node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/identity-four.json" "$(printf '4%.0s' {1..64})" >"$TMP_DIR/identity-four-result.json"
+THIRD_COMMITMENT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/identity-three-result.json")"
+FOURTH_COMMITMENT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/identity-four-result.json")"
+SNAPSHOT_ID="$(node - "$RPC_URL" <<'NODE'
+const response = await fetch(process.argv[2], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "evm_snapshot", params: [] }) });
+const payload = await response.json(); if (!response.ok || payload.error || !/^(0x)?[0-9a-f]+$/i.test(String(payload.result))) process.exit(1); process.stdout.write(String(payload.result));
+NODE
+)" || die "evm_snapshot failed"
+send_checked orphan-branch-add "$REGISTRY" 'addMember(uint256)' "$THIRD_COMMITMENT" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 --checkpoint "$TMP_DIR/group.checkpoint.json" >"$TMP_DIR/orphan-branch-proof.json"
+node - "$RPC_URL" "$SNAPSHOT_ID" <<'NODE' || die "evm_revert failed"
+const response = await fetch(process.argv[2], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "evm_revert", params: [process.argv[3]] }) });
+const payload = await response.json(); if (!response.ok || payload.error || payload.result !== true) process.exit(1);
+NODE
+send_checked divergent-branch-add "$REGISTRY" 'addMember(uint256)' "$FOURTH_COMMITMENT" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 --checkpoint "$TMP_DIR/group.checkpoint.json" >"$TMP_DIR/reorg-rebuild-proof.json"
+node - "$TMP_DIR/reorg-rebuild-proof.json" <<'NODE'
+const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
+if (p.checkpoint?.mode !== "rebuilt-after-reorg" || p.chain?.activeMembers !== 2 || p.chain?.eventCount <= 1) throw new Error("reorg checkpoint was not safely rebuilt");
+NODE
 node --input-type=module - "$MANIFEST" "$TMP_DIR/deployment-evidence.json" "$RECEIPTS" "$REGISTRY" "$GROUP_ID" "$TMP_DIR/proof.json" "$TMP_DIR/post-remove-proof.json" <<'NODE'
 import { readFileSync } from "node:fs";
 const [manifestPath, deploymentEvidencePath, receiptsPath, registry, groupId, proofPath, postRemoveProofPath] = process.argv.slice(2);
 function deployment(value) { if (typeof value === "string") { try { return deployment(JSON.parse(value)); } catch { return undefined; } } if (value && typeof value === "object") { if ("chainId" in value) return value; for (const child of Object.values(value)) { const found = deployment(child); if (found) return found; } } return undefined; }
 const manifest = deployment(JSON.parse(readFileSync(manifestPath, "utf8")));
 if (manifest.registry.toLowerCase() !== registry.toLowerCase() || !/^[0-9]+$/.test(groupId)) throw new Error("manifest wiring mismatch");
-const receipts = readFileSync(receiptsPath, "utf8").trim().split("\n").map(JSON.parse);
+const receipts = readFileSync(receiptsPath, "utf8").trim().split("\n").map(JSON.parse).filter(({ label }) => label !== "orphan-branch-add" && label !== "divergent-branch-add");
 if (receipts.length !== 6 || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("incomplete state-changing receipt manifest");
-const summarize = (proofPath) => { const { chain, metrics, gasEstimates } = JSON.parse(readFileSync(proofPath, "utf8")); return { chain, metrics, gasEstimates }; };
+const summarize = (proofPath) => { const { chain, checkpoint, metrics, gasEstimates } = JSON.parse(readFileSync(proofPath, "utf8")); return { chain, checkpoint, metrics, gasEstimates }; };
 console.log(JSON.stringify({ deployment: manifest, deploymentEvidence: JSON.parse(readFileSync(deploymentEvidencePath, "utf8")), transactions: receipts, chainProof: summarize(proofPath), postRemovalChainProof: summarize(postRemoveProofPath) }));
 NODE

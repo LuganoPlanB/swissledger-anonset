@@ -87,6 +87,20 @@ describe("anonset CLI client hardening", () => {
         assert.equal(replayed.group.members.filter((member) => member !== 0n).length, 0);
     });
 
+    it("replays checkpoint deltas exactly once from an imported tree", () => {
+        const base = new Group([11n]);
+        const expected = new Group([11n, 12n]);
+        const added = eventLog("MemberAdded", [1n, 1n, 12n, expected.root]);
+        const resumed = replayGroupLogs([added], 2, true, Group.import(base.export()));
+        assert.equal(resumed.group.export(), expected.export());
+        assert.equal(resumed.insertions, 2);
+        assert.throws(() => replayGroupLogs([added, added], 2, true, Group.import(base.export())), /incomplete/);
+        const withTwo = new Group([11n, 12n]); const removedExpected = new Group([11n, 12n]); removedExpected.removeMember(0);
+        const removed = eventLog("MemberRemoved", [1n, 0n, 11n, removedExpected.root]);
+        const afterRemove = replayGroupLogs([removed], 2, true, Group.import(withTwo.export()));
+        assert.equal(afterRemove.group.root, removedExpected.root);
+    });
+
     it("writes an atomic owner-only identity and never writes its secret to stdout", () => {
         const destination = identityFile();
         const result = run("identity", "create", destination, "0".repeat(64));
@@ -173,6 +187,11 @@ describe("anonset CLI client hardening", () => {
         const unsafeChain = run("verify", "on-chain", "0x0000000000000000000000000000000000000001", writeProof(path.join(tmp, "safe-proof.json")), "http://127.0.0.1:1", "9007199254740992");
         assert.equal(unsafeChain.status, 2);
         assert.match(unsafeChain.stderr, /safe integer/);
+        assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--checkpoint").status, 2);
+        assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--checkpoint", "one.json", "--checkpoint", "two.json").status, 2);
+        assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--confirmations", "-1").status, 2);
+        assert.equal(run("proof", "generate-chain", identityFile(), "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337", "--confirmations", "0", "--confirmations", "1").status, 2);
+        assert.equal(run("proof", "generate", identityFile(), "missing.json", "--checkpoint", "checkpoint.json").status, 2);
     });
 });
 
@@ -197,6 +216,12 @@ it("checkpoint module round-trips deterministic public state", () => {
     const underreported = { ...checkpoint, insertionSlots: "1" };
     assert.throws(() => importCheckpoint(serializeCheckpoint(underreported), { maxInsertionSlots: 1 }), /insertionSlots/);
     assert.throws(() => createCheckpoint({ ...metadata, insertionSlots: "1" }, group, 2), /insertionSlots/);
+    assert.throws(() => importCheckpoint(serializeCheckpoint(checkpoint), { maxInsertionSlots: 2, expected: { chainId: "1" } }), /chainId/);
+    for (const [name, value] of Object.entries({ chainId: "1", registry: "0x0000000000000000000000000000000000000003", semaphore: "0x0000000000000000000000000000000000000004", groupId: "8", startBlock: "3" })) {
+        const original = serializeCheckpoint(checkpoint);
+        assert.throws(() => importCheckpoint(original, { maxInsertionSlots: 2, expected: { [name]: value } }), new RegExp(name));
+        assert.equal(serializeCheckpoint(checkpoint), original);
+    }
 });
 
 it("checkpoint persistence rejects unsafe or modified input and retains prior data on failure", () => {

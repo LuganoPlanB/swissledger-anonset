@@ -31,9 +31,19 @@ if (deployment.deployments.some(({ address, transactionHash, status, gasUsed, bl
 }
 const expectedTransactionLabels = ["add-member-one", "add-member-two", "verify-membership-1", "verify-membership-2", "validate-membership", "remove-member"];
 const chainProofMetrics = smoke.timings?.chainProof;
-const validMetricObject = chainProofMetrics && ["deploymentDiscoveryMs", "eventFetchMs", "reconstructionMs", "proofGenerationMs", "gasEstimationMs", "totalMs"]
+const validMetricObject = chainProofMetrics && ["deploymentDiscoveryMs", "eventFetchMs", "reconstructionMs", "checkpointLoadMs", "checkpointWriteMs", "proofGenerationMs", "gasEstimationMs", "totalMs"]
   .every((name) => Number.isFinite(chainProofMetrics[name]) && chainProofMetrics[name] >= 0);
 const validGasEstimate = (value) => value === null || (typeof value === "string" && /^[0-9]+$/.test(value));
+const checkpoint = smoke.checkpoint;
+const checkpointKeys = ["mode", "persisted", "path", "fileSha256", "bytes", "baseBlock", "baseHash", "targetBlock", "targetHash", "schema", "root", "depth", "size", "insertionSlots", "activeMembers", "deltaEvents"];
+const decimal = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
+const hash = (value) => typeof value === "string" && /^0x[0-9a-f]{64}$/i.test(value);
+const validCheckpoint = checkpoint && Object.keys(checkpoint).sort().join(",") === checkpointKeys.sort().join(",") &&
+  ["full", "resumed", "rebuilt-after-reorg", "unpersisted"].includes(checkpoint.mode) && typeof checkpoint.persisted === "boolean" &&
+  (checkpoint.path === null || typeof checkpoint.path === "string") && (checkpoint.fileSha256 === null || /^[0-9a-f]{64}$/i.test(checkpoint.fileSha256)) &&
+  (checkpoint.bytes === null || (Number.isSafeInteger(checkpoint.bytes) && checkpoint.bytes > 0)) && Number.isSafeInteger(checkpoint.baseBlock) && Number.isSafeInteger(checkpoint.targetBlock) && checkpoint.baseBlock >= 0 && checkpoint.targetBlock >= checkpoint.baseBlock && hash(checkpoint.baseHash) && hash(checkpoint.targetHash) &&
+  checkpoint.schema === "swissledger-anonset-checkpoint/v1" && [checkpoint.root, checkpoint.depth, checkpoint.size, checkpoint.insertionSlots, checkpoint.activeMembers].every(decimal) && Number.isSafeInteger(checkpoint.deltaEvents) && checkpoint.deltaEvents >= 0 &&
+  !/groupExport|privateKey|commitment|siblings|points|nullifier/i.test(JSON.stringify(checkpoint));
 if (!Array.isArray(smoke.transactions) || smoke.transactions.length !== expectedTransactionLabels.length ||
     smoke.transactions.map(({ label }) => label).join(",") !== expectedTransactionLabels.join(",") ||
     smoke.transactions.some(({ transactionHash, status, gasUsed, blockNumber, observedDurationMs }) =>
@@ -45,7 +55,7 @@ if (!Array.isArray(smoke.transactions) || smoke.transactions.length !== expected
     !validGasEstimate(smoke.gasEstimates?.verifyMembership) || !validGasEstimate(smoke.gasEstimates?.validateMembership) ||
     ![smoke.reconstruction?.fromBlock, smoke.reconstruction?.toBlock, smoke.reconstruction?.eventCount,
       smoke.reconstruction?.insertionSlots, smoke.reconstruction?.activeMembers]
-      .every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      .every((value) => Number.isSafeInteger(value) && value >= 0) || !validCheckpoint) {
   throw new Error("invalid smoke benchmark evidence");
 }
 mkdirSync(out, { recursive: true });

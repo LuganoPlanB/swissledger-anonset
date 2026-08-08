@@ -19,7 +19,7 @@ npm run anonset -- --help
 ```text
 anonset-cli identity create <identity.json> [private-key-hex] [--force]
 anonset-cli proof generate <identity.json> <group.json> [message] [scope] [--max-insertion-slots <n>]
-anonset-cli proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>]
+anonset-cli proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] [--max-insertion-slots <n>] [--checkpoint <file>] [--confirmations <n>]
 anonset-cli verify local <proof.json>
 anonset-cli verify on-chain <address> <proof.json> <rpc-url> <chain-id>
 ```
@@ -36,6 +36,12 @@ canonically replays the group's public events, and refuses to prove unless the
 reconstructed root, depth, and size match the same block's on-chain state. An
 explicit trusted `from-block` avoids historical bytecode discovery when the RPC
 does not expose archive state.
+
+`--checkpoint <file>` writes a public tree cache and resumes from it only after
+its chain identity, saved block hash, and historical Semaphore state validate.
+A stale/unavailable anchor safely falls back to complete history. The response
+always contains a secret-free `checkpoint` descriptor; without this option it
+reports `mode: "unpersisted"`. `--confirmations <n>` selects `head - n`.
 
 Both proof-generation commands default to a budget of 65,536 insertion slots.
 An insertion slot is retained after a member removal, so it differs from the
@@ -75,7 +81,7 @@ includes the secret, identity commitment, or member index in its JSON output.
 
 The output includes `metrics` for deployment discovery, event download, tree
 reconstruction, Groth16 proof generation, gas estimation, and total observed
-wall time. `gasEstimates.verifyMembership` and
+wall time, plus checkpoint load/validation/write observations. `gasEstimates.verifyMembership` and
 `gasEstimates.validateMembership` are decimal estimates or `null` when the RPC
 does not support a usable estimate. Reconstruction and proof generation are
 off-chain and consume no gas. Timings are observations on that client/RPC, not
