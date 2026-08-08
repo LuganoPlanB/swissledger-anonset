@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 const root = new URL("..", import.meta.url);
@@ -10,7 +10,7 @@ test("maintainer documentation points to current commands and paths", () => {
     const readme = text("README.md");
     const agents = text("AGENTS.md");
     const deployment = text("docs/DEPLOYMENT.md");
-    for (const path of ["README.md", "USAGE.md", "AGENTS.md", "GNUmakefile", "clients/anonset/README.md", "docs/DEPLOYMENT.md", "docs/OPERATIONS.md", "docs/READINESS.md"]) {
+    for (const path of ["README.md", "USAGE.md", "AGENTS.md", "GNUmakefile", "clients/anonset/README.md", "scripts/README.md", "docs/DEPLOYMENT.md", "docs/OPERATIONS.md", "docs/READINESS.md"]) {
         assert.ok(existsSync(new URL(path, root)), `missing documented path: ${path}`);
     }
     assert.match(readme, /SwissLedger Foundry v1\.11\.0/);
@@ -26,7 +26,12 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(readme, /hasMember\(uint256,uint256\)\(bool\)/);
     assert.match(readme, /MemberAdded`, `MembersAdded`, and\s+`MemberRemoved`/);
     assert.match(readme, /Group\.export\(\)/);
-    assert.match(readme, /1–1,024 commitments/);
+    assert.match(readme, /65,536 insertion slots/);
+    assert.match(readme, /4,294,967,296/);
+    assert.match(readme, /30\.623 s/);
+    assert.match(readme, /420 MB/);
+    assert.match(readme, /group rotate/);
+    assert.match(readme, /rebuilt-after-reorg/);
     assert.match(readme, /historical roots for one hour/);
     assert.match(readme, /merkleProofSiblings.*transaction calldata/s);
     assert.match(readme, /96\.04%/);
@@ -38,6 +43,9 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(usage, /PoseidonT6` is not interchangeable/);
     assert.match(usage, /Chain `110` has no automated/);
     assert.match(usage, /Timings are observations, not SLAs/);
+    assert.match(usage, /ABORTED_SOURCE_CHANGED/);
+    assert.match(usage, /AWAITING_OWNER_ACCEPTANCE` is not completion/);
+    assert.match(usage, /scripts\/README\.md/);
     assert.doesNotMatch(agents, /clients\/merklezk/);
     assert.match(agents, /Node client intentionally uses `ethers`/);
     assert.match(agents, /do not add Hardhat or Truffle/);
@@ -59,21 +67,28 @@ test("maintainer documentation points to current commands and paths", () => {
     assert.match(readme, /PR\s+validation creates fresh\s+testnet evidence only; it never starts a release/);
     assert.match(readme, /SWISSLEDGER_TESTNET_RPC/);
     assert.match(readme, /organization secret `SWISSLEDGER_TESTNET_DEPLOY`/);
+    const scriptReadme = text("scripts/README.md");
+    for (const script of readdirSync(new URL("scripts", root)).filter((name) => name !== "README.md")) {
+        assert.ok(scriptReadme.includes(`\`${script}`), `missing script synopsis: ${script}`);
+    }
 });
 
 test("documented CLI interface matches current help", () => {
     const help = execFileSync(process.execPath, ["clients/anonset/anonset-cli.mjs", "--help"], {
         cwd: new URL(".", root), encoding: "utf8"
     });
-    const client = text("clients/anonset/README.md");
+    const documentedContracts = [text("clients/anonset/README.md"), text("README.md"), text("USAGE.md")];
     for (const fragment of [
         "identity create <identity.json> [private-key-hex] [--force]",
         "proof generate <identity.json> <group.json> [message] [scope]",
         "proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block]",
+        "group rotate <source-registry> <rpc-url> <chain-id>",
         "verify local <proof.json>",
         "verify on-chain <address> <proof.json> <rpc-url> <chain-id>"
     ]) {
         assert.match(help, new RegExp(fragment.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&")));
-        assert.match(client, new RegExp(fragment.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&")));
+        for (const contract of documentedContracts) {
+            assert.match(contract, new RegExp(fragment.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&")));
+        }
     }
 });
