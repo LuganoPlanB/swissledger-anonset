@@ -69,6 +69,7 @@ test("documented CLI interface matches current help", () => {
     for (const fragment of [
         "identity create <identity.json> [private-key-hex] [--force]",
         "proof generate <identity.json> <group.json> [message] [scope]",
+        "proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block]",
         "verify local <proof.json>",
         "verify on-chain <address> <proof.json> <rpc-url> <chain-id>"
     ]) {

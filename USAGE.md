@@ -106,6 +106,7 @@ updating documented numbers.
 ```bash
 npm run anonset -- identity create identity.json
 npm run anonset -- proof generate identity.json group.json 0 <group-id>
+npm run anonset -- proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> 0 [from-block]
 npm run anonset -- verify local proof.json
 npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
 ```
@@ -114,6 +115,14 @@ Identity files are owner-only, atomic, size-limited, regular files. Secret data
 must never reach standard output or errors. Preserve stable exit classes:
 usage/input `2`, local file/proof `3`, and RPC/chain `4`. Read
 `clients/anonset/README.md` before changing the CLI contract.
+
+`proof generate-chain` is the authoritative secret-plus-chain flow. It derives
+the registry deployment block (or accepts a trusted override), replays
+Semaphore member events in canonical order, checks every event root and the
+snapshot's final root/depth/size, and only then generates a scope-bound proof.
+Raw secrets are accepted only through bounded stdin (`-`), never as a command
+argument. Its JSON exposes non-secret reconstruction/timing/gas-estimate
+measurements but never the identity commitment or leaf index.
 
 ## CI and evidence contract
 

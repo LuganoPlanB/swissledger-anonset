@@ -30,6 +30,10 @@ if (deployment.deployments.some(({ address, transactionHash, status, gasUsed, bl
   throw new Error("invalid deployment identity");
 }
 const expectedTransactionLabels = ["add-member-one", "add-member-two", "verify-membership-1", "verify-membership-2", "validate-membership", "remove-member"];
+const chainProofMetrics = smoke.timings?.chainProof;
+const validMetricObject = chainProofMetrics && ["deploymentDiscoveryMs", "eventFetchMs", "reconstructionMs", "proofGenerationMs", "gasEstimationMs", "totalMs"]
+  .every((name) => Number.isFinite(chainProofMetrics[name]) && chainProofMetrics[name] >= 0);
+const validGasEstimate = (value) => value === null || (typeof value === "string" && /^[0-9]+$/.test(value));
 if (!Array.isArray(smoke.transactions) || smoke.transactions.length !== expectedTransactionLabels.length ||
     smoke.transactions.map(({ label }) => label).join(",") !== expectedTransactionLabels.join(",") ||
     smoke.transactions.some(({ transactionHash, status, gasUsed, blockNumber, observedDurationMs }) =>
@@ -37,6 +41,10 @@ if (!Array.isArray(smoke.transactions) || smoke.transactions.length !== expected
       !/^[0-9]+$/.test(gasUsed) || !/^[0-9]+$/.test(blockNumber) ||
       !Number.isSafeInteger(observedDurationMs) || observedDurationMs < 0) ||
     ![smoke.timings?.identitySetupMs, smoke.timings?.proofGenerationMs, smoke.timings?.totalObservedMs]
+      .every((value) => Number.isSafeInteger(value) && value >= 0) || !validMetricObject ||
+    !validGasEstimate(smoke.gasEstimates?.verifyMembership) || !validGasEstimate(smoke.gasEstimates?.validateMembership) ||
+    ![smoke.reconstruction?.fromBlock, smoke.reconstruction?.toBlock, smoke.reconstruction?.eventCount,
+      smoke.reconstruction?.insertionSlots, smoke.reconstruction?.activeMembers]
       .every((value) => Number.isSafeInteger(value) && value >= 0)) {
   throw new Error("invalid smoke benchmark evidence");
 }
@@ -61,6 +69,14 @@ const benchmarks = {
   protocolTransactionObservedDurationMs: sumDuration(smoke.transactions),
   identitySetupObservedDurationMs: smoke.timings.identitySetupMs,
   proofGenerationObservedDurationMs: smoke.timings.proofGenerationMs,
+  chainDeploymentDiscoveryObservedDurationMs: chainProofMetrics.deploymentDiscoveryMs,
+  chainEventFetchObservedDurationMs: chainProofMetrics.eventFetchMs,
+  chainReconstructionObservedDurationMs: chainProofMetrics.reconstructionMs,
+  groth16ProofObservedDurationMs: chainProofMetrics.proofGenerationMs,
+  proofGasEstimationObservedDurationMs: chainProofMetrics.gasEstimationMs,
+  chainProofTotalObservedDurationMs: chainProofMetrics.totalMs,
+  verifyMembershipEstimatedGas: smoke.gasEstimates.verifyMembership,
+  validateMembershipEstimatedGas: smoke.gasEstimates.validateMembership,
   smokeTotalObservedDurationMs: smoke.timings.totalObservedMs
 };
 const manifest = { schema: 1, commit: process.env.GITHUB_SHA ?? "local", utc: new Date().toISOString(), chainId: 222, rpcHost: deployment.rpcHost, deployer: deployment.deployer, tool: process.env.SWISSLEDGER_FOUNDRY_VERSION ?? "swissledger-foundry-1.11.0", solc: "0.8.30", deployments: deployment.deployments.map(({ name, address, transactionHash, status, gasUsed, blockNumber, runtimeCodeSha256, observedDurationMs }) => ({ name, address, transactionHash, status, gasUsed, blockNumber, runtimeCodeSha256, observedDurationMs })), wiring: { poseidon: deployment.poseidon, verifier: deployment.verifier, semaphore: deployment.semaphore, registry: deployment.registry }, contracts, benchmarks, smoke, runUrl: process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : "local" };

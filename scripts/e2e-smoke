@@ -76,7 +76,7 @@ node clients/anonset/anonset-cli.mjs identity create "$TMP_DIR/identity-two.json
 SECOND_COMMITMENT="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).commitment)' "$TMP_DIR/identity-two-result.json")"
 printf '{"members":["%s","%s"]}\n' "$COMMITMENT" "$SECOND_COMMITMENT" >"$TMP_DIR/group.json"
 send_checked add-member-one "$REGISTRY" 'addMember(uint256)' "$COMMITMENT" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
-send_checked add-member-two "$REGISTRY" 'addMember(uint256)' "$SECOND_COMMITMENT" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
+send_checked add-member-two "$REGISTRY" 'addMembers(uint256[])' "[$SECOND_COMMITMENT]" --rpc-url "$RPC_URL" --private-key "$KEY" --legacy --gas-price 0 --gas-limit 300000
 COUNT_BEFORE_REMOVE="$("$CAST" call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
 ROOT_BEFORE_REMOVE="$("$CAST" call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
 LOCAL_ROOT="$(node --input-type=module - "$TMP_DIR/group.json" <<'NODE'
@@ -86,9 +86,14 @@ console.log(new Group(JSON.parse(readFileSync(process.argv[2], "utf8")).members.
 NODE
 )"
 [[ "$ROOT_BEFORE_REMOVE" == "$LOCAL_ROOT" ]] || die "off-chain group root does not match deployed Semaphore root (on-chain $ROOT_BEFORE_REMOVE, client $LOCAL_ROOT)"
-node clients/anonset/anonset-cli.mjs proof generate "$TMP_DIR/identity.json" "$TMP_DIR/group.json" 0 "$GROUP_ID" >"$TMP_DIR/proof.json"
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 >"$TMP_DIR/proof.json"
 mapfile -t PROOF < <(node - "$TMP_DIR/proof.json" <<'NODE'
 const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
+if (!Number.isFinite(p.metrics?.totalMs) || !Number.isFinite(p.metrics?.reconstructionMs) ||
+    !/^[0-9]+$/.test(p.gasEstimates?.verifyMembership ?? "") || !/^[0-9]+$/.test(p.gasEstimates?.validateMembership ?? "") ||
+    p.chain?.eventCount !== 2 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 2 ||
+    /privateKey|commitment|memberIndex/i.test(JSON.stringify(p))) throw new Error("invalid or privacy-unsafe chain proof metrics");
 console.log([p.merkleTreeDepth, p.merkleTreeRoot, p.nullifier, p.message, `[${p.points.join(",")}]`].join("\n"));
 NODE
 )
@@ -110,13 +115,23 @@ send_checked remove-member "$REGISTRY" 'removeMember(uint256,uint256[])' "$COMMI
 COUNT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'memberCount()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
 ROOT_AFTER_REMOVE="$("$CAST" call "$REGISTRY" 'activeRoot()(uint256)' --rpc-url "$RPC_URL" | awk 'NR == 1 { print $1 }')"
 [[ "$COUNT_AFTER_REMOVE" -le "$COUNT_BEFORE_REMOVE" && "$ROOT_AFTER_REMOVE" != "$ROOT_BEFORE_REMOVE" ]] || die "member removal did not produce the expected count/root transition"
-node --input-type=module - "$MANIFEST" "$TMP_DIR/deployment-evidence.json" "$RECEIPTS" "$REGISTRY" "$GROUP_ID" <<'NODE'
+node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).privateKey)' "$TMP_DIR/identity-two.json" |
+    node clients/anonset/anonset-cli.mjs proof generate-chain - "$REGISTRY" "$RPC_URL" 31337 0 0 >"$TMP_DIR/post-remove-proof.json"
+node - "$TMP_DIR/post-remove-proof.json" "$ROOT_AFTER_REMOVE" <<'NODE'
+const p = JSON.parse(require("fs").readFileSync(process.argv[2]));
+if (p.chain?.eventCount !== 3 || p.chain?.insertionSlots !== 2 || p.chain?.activeMembers !== 1 ||
+    p.merkleTreeRoot !== process.argv[3]) throw new Error("removed-member reconstruction did not match current state");
+NODE
+POST_REMOVE_VERIFICATION="$(node clients/anonset/anonset-cli.mjs verify local "$TMP_DIR/post-remove-proof.json")"
+node -e 'if (JSON.parse(process.argv[1]).ok !== true) process.exit(1)' "$POST_REMOVE_VERIFICATION" || die "post-removal reconstructed proof did not verify locally"
+node --input-type=module - "$MANIFEST" "$TMP_DIR/deployment-evidence.json" "$RECEIPTS" "$REGISTRY" "$GROUP_ID" "$TMP_DIR/proof.json" "$TMP_DIR/post-remove-proof.json" <<'NODE'
 import { readFileSync } from "node:fs";
-const [manifestPath, deploymentEvidencePath, receiptsPath, registry, groupId] = process.argv.slice(2);
+const [manifestPath, deploymentEvidencePath, receiptsPath, registry, groupId, proofPath, postRemoveProofPath] = process.argv.slice(2);
 function deployment(value) { if (typeof value === "string") { try { return deployment(JSON.parse(value)); } catch { return undefined; } } if (value && typeof value === "object") { if ("chainId" in value) return value; for (const child of Object.values(value)) { const found = deployment(child); if (found) return found; } } return undefined; }
 const manifest = deployment(JSON.parse(readFileSync(manifestPath, "utf8")));
 if (manifest.registry.toLowerCase() !== registry.toLowerCase() || !/^[0-9]+$/.test(groupId)) throw new Error("manifest wiring mismatch");
 const receipts = readFileSync(receiptsPath, "utf8").trim().split("\n").map(JSON.parse);
 if (receipts.length !== 6 || !receipts.every((receipt) => receipt.status === "0x1")) throw new Error("incomplete state-changing receipt manifest");
-console.log(JSON.stringify({ deployment: manifest, deploymentEvidence: JSON.parse(readFileSync(deploymentEvidencePath, "utf8")), transactions: receipts }));
+const summarize = (proofPath) => { const { chain, metrics, gasEstimates } = JSON.parse(readFileSync(proofPath, "utf8")); return { chain, metrics, gasEstimates }; };
+console.log(JSON.stringify({ deployment: manifest, deploymentEvidence: JSON.parse(readFileSync(deploymentEvidencePath, "utf8")), transactions: receipts, chainProof: summarize(proofPath), postRemovalChainProof: summarize(postRemoveProofPath) }));
 NODE

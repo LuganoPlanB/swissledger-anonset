@@ -15,6 +15,9 @@ const tmp = path.join(directory, "..", "..", "fixtures", "anonset");
 function run(...args) {
     return spawnSync(process.execPath, [cli, ...args], { cwd: directory, encoding: "utf8", timeout: 10_000 });
 }
+function runWithInput(input, ...args) {
+    return spawnSync(process.execPath, [cli, ...args], { cwd: directory, encoding: "utf8", input, timeout: 10_000 });
+}
 function json(result) { return JSON.parse(typeof result === "string" ? result : result.stdout); }
 function identityFile(name = "identity.json") { return path.join(tmp, name); }
 function writeIdentity(file = identityFile()) {
@@ -91,6 +94,16 @@ describe("anonset CLI client hardening", () => {
         writeFileSync(proof, JSON.stringify({ merkleTreeDepth: "20", merkleTreeRoot: "1", nullifier: "2", message: "0", scope: "0", points: ["1"] }));
         assert.equal(run("verify", "local", proof).status, 2);
         assert.equal(run("verify", "on-chain", "not-an-address", proof, "http://127.0.0.1:1", "31337").status, 2);
+    });
+
+    it("accepts a bounded stdin identity secret without exposing it", () => {
+        const secret = "6".repeat(64);
+        const result = runWithInput(secret, "proof", "generate-chain", "-", "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337");
+        assert.equal(result.status, 4);
+        assert.match(result.stderr, /RPC chain check failed/);
+        assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
+        assert.equal(runWithInput("x".repeat(129), "proof", "generate-chain", "-", "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337").status, 3);
+        assert.equal(runWithInput("not-a-secret", "proof", "generate-chain", "-", "0x0000000000000000000000000000000000000001", "http://127.0.0.1:1", "31337").status, 2);
     });
 
     it("checks RPC timeout and wrong-chain response with stable exit code and redacted errors", async () => {

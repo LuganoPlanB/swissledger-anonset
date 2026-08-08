@@ -6,6 +6,7 @@ import {
     lstatSync,
     openSync,
     readFileSync,
+    readSync,
     renameSync,
     unlinkSync,
     writeFileSync,
@@ -14,11 +15,14 @@ import path from "node:path";
 import { Identity } from "@semaphore-protocol/identity";
 import { Group } from "@semaphore-protocol/group";
 import { generateProof, verifyProof } from "./proof-runtime.mjs";
-import { Contract, isAddress, JsonRpcProvider } from "ethers";
+import { Contract, Interface, isAddress, JsonRpcProvider, toBeHex, zeroPadValue } from "ethers";
+import { performance } from "node:perf_hooks";
 
 const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_GROUP_MEMBERS = 1024;
 const MAX_TREE_DEPTH = 32;
+const MAX_STDIN_SECRET_BYTES = 128;
+const LOG_BLOCK_SPAN = 50_000;
 const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const EXIT_USAGE = 2;
 const EXIT_FILE = 3;
@@ -81,6 +85,26 @@ function identityFromFile(filePath) {
         fail("identity.privateKey must be 32-byte hexadecimal");
     }
     return new Identity(Buffer.from(data.privateKey, "hex"));
+}
+
+function identityFromStdin() {
+    const chunks = [];
+    let size = 0;
+    while (true) {
+        const chunk = Buffer.alloc(64);
+        const read = readSync(0, chunk, 0, chunk.length, null);
+        if (read === 0) break;
+        size += read;
+        if (size > MAX_STDIN_SECRET_BYTES) fail("stdin identity secret is too large", EXIT_FILE);
+        chunks.push(chunk.subarray(0, read));
+    }
+    const secret = Buffer.concat(chunks).toString("utf8").trim();
+    return new Identity(Buffer.from(privateKey(secret), "hex"));
+}
+
+function identityFromSource(source) {
+    if (!source) fail("identity source is required");
+    return source === "-" ? identityFromStdin() : identityFromFile(source);
 }
 
 function groupFromFile(filePath) {
@@ -151,6 +175,106 @@ async function assertRpcChain(url, expectedChainId) {
     if (BigInt(payload.result) !== expectedChainId) fail("RPC chain ID does not match the expected chain", EXIT_RPC);
 }
 
+function blockNumber(value, label) {
+    if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) fail(`${label} must be a decimal block number`);
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) fail(`${label} exceeds the supported safe integer range`);
+    return parsed;
+}
+
+function elapsed(started) {
+    return Math.round((performance.now() - started) * 1000) / 1000;
+}
+
+async function discoverDeploymentBlock(provider, address, latestBlock) {
+    let latestCode;
+    try { latestCode = await provider.getCode(address, latestBlock); } catch { fail("registry bytecode lookup failed", EXIT_RPC); }
+    if (latestCode === "0x") fail("registry has no bytecode at the snapshot block", EXIT_RPC);
+    let low = 0;
+    let high = latestBlock;
+    try {
+        while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (await provider.getCode(address, middle) === "0x") low = middle + 1;
+            else high = middle;
+        }
+    } catch {
+        fail("deployment-block discovery needs historical RPC state; pass [from-block] from trusted deployment evidence", EXIT_RPC);
+    }
+    return low;
+}
+
+const SEMAPHORE_EVENTS = new Interface([
+    "event MemberAdded(uint256 indexed groupId,uint256 index,uint256 identityCommitment,uint256 merkleTreeRoot)",
+    "event MembersAdded(uint256 indexed groupId,uint256 startIndex,uint256[] identityCommitments,uint256 merkleTreeRoot)",
+    "event MemberUpdated(uint256 indexed groupId,uint256 index,uint256 identityCommitment,uint256 newIdentityCommitment,uint256 merkleTreeRoot)",
+    "event MemberRemoved(uint256 indexed groupId,uint256 index,uint256 identityCommitment,uint256 merkleTreeRoot)",
+]);
+
+async function fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, toBlock) {
+    const eventNames = ["MemberAdded", "MembersAdded", "MemberUpdated", "MemberRemoved"];
+    const topics = [eventNames.map((name) => SEMAPHORE_EVENTS.getEvent(name).topicHash), zeroPadValue(toBeHex(groupId), 32)];
+    const logs = [];
+    try {
+        for (let start = fromBlock; start <= toBlock; start += LOG_BLOCK_SPAN) {
+            const end = Math.min(start + LOG_BLOCK_SPAN - 1, toBlock);
+            logs.push(...await provider.getLogs({ address: semaphoreAddress, fromBlock: start, toBlock: end, topics }));
+        }
+    } catch { fail("Semaphore event scan failed", EXIT_RPC); }
+    return logs.sort((left, right) => left.blockNumber - right.blockNumber || left.transactionIndex - right.transactionIndex || left.index - right.index);
+}
+
+function replayGroupLogs(logs) {
+    const group = new Group();
+    let insertions = 0;
+    for (const log of logs) {
+        let parsed;
+        try { parsed = SEMAPHORE_EVENTS.parseLog(log); } catch { fail("Semaphore event decoding failed", EXIT_RPC); }
+        const args = parsed.args;
+        const index = Number(parsed.name === "MembersAdded" ? args.startIndex : args.index);
+        if (!Number.isSafeInteger(index) || index < 0) fail("Semaphore event contains an unsupported member index", EXIT_RPC);
+        try {
+            if (parsed.name === "MemberAdded") {
+                if (index !== group.size) fail("Semaphore member event sequence is incomplete", EXIT_RPC);
+                if (insertions >= MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+                group.addMember(args.identityCommitment);
+                insertions += 1;
+            } else if (parsed.name === "MembersAdded") {
+                if (index !== group.size) fail("Semaphore batch event sequence is incomplete", EXIT_RPC);
+                if (insertions + args.identityCommitments.length > MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+                group.addMembers([...args.identityCommitments]);
+                insertions += args.identityCommitments.length;
+            } else if (parsed.name === "MemberUpdated") {
+                if (index >= group.size || group.members[index] !== args.identityCommitment) fail("Semaphore update event does not match reconstructed state", EXIT_RPC);
+                group.updateMember(index, args.newIdentityCommitment);
+            } else {
+                if (index >= group.size || group.members[index] !== args.identityCommitment) fail("Semaphore removal event does not match reconstructed state", EXIT_RPC);
+                group.removeMember(index);
+            }
+        } catch (error) {
+            if (error instanceof CliError) throw error;
+            fail("Semaphore event cannot be replayed", EXIT_RPC);
+        }
+        if (group.root !== args.merkleTreeRoot) fail("Semaphore event root does not match reconstructed state", EXIT_RPC);
+        if (group.size > MAX_GROUP_MEMBERS) fail(`reconstructed group exceeds ${MAX_GROUP_MEMBERS} insertion slots`, EXIT_FILE);
+    }
+    return { group, insertions };
+}
+
+async function estimateProofGas(registry, proof) {
+    const args = [proof.merkleTreeDepth, proof.merkleTreeRoot, proof.nullifier, proof.message, proof.points];
+    const estimate = async (signature) => {
+        try {
+            if (await registry[signature].staticCall(...args) !== true) return null;
+            return (await registry[signature].estimateGas(...args)).toString();
+        } catch { return null; }
+    };
+    return {
+        verifyMembership: await estimate("verifyMembership(uint256,uint256,uint256,uint256,uint256[8])"),
+        validateMembership: await estimate("validateMembership(uint256,uint256,uint256,uint256,uint256[8])"),
+    };
+}
+
 async function cmdIdentityCreate(filePath, key, force) {
     if (!filePath) fail("identity create requires <identity.json>");
     const identity = key ? new Identity(Buffer.from(privateKey(key), "hex")) : new Identity();
@@ -165,6 +289,100 @@ async function cmdProofGenerate(identityPath, groupPath, message = "0", scope = 
     field(scope, "scope");
     const proof = await generateProof(identity, group, message, scope);
     output({ merkleTreeDepth: proof.merkleTreeDepth, merkleTreeRoot: proof.merkleTreeRoot, nullifier: proof.nullifier, message: proof.message, scope: proof.scope, points: proof.points });
+}
+
+async function cmdProofGenerateChain(identitySource, registryAddress, rpcUrl, chainId, message = "0", suppliedFromBlock) {
+    const totalStarted = performance.now();
+    if (!isAddress(registryAddress)) fail("registry address is invalid");
+    const expectedChainId = field(chainId, "chain ID");
+    if (expectedChainId === 0n) fail("chain ID must be nonzero");
+    if (expectedChainId > BigInt(Number.MAX_SAFE_INTEGER)) fail("chain ID exceeds the supported safe integer range");
+    field(message, "message");
+    const identity = identityFromSource(identitySource);
+    await assertRpcChain(rpcUrl, expectedChainId);
+    const provider = new JsonRpcProvider(rpcUrl, Number(expectedChainId), { staticNetwork: true });
+    try {
+        const latestBlock = await provider.getBlockNumber();
+        const discoveryStarted = performance.now();
+        const fromBlock = suppliedFromBlock === undefined
+            ? await discoverDeploymentBlock(provider, registryAddress, latestBlock)
+            : blockNumber(suppliedFromBlock, "from block");
+        if (fromBlock > latestBlock) fail("from block is newer than the snapshot block");
+        const deploymentDiscoveryMs = elapsed(discoveryStarted);
+        const registryAbi = [
+            "function semaphore() view returns (address)",
+            "function groupId() view returns (uint256)",
+            "function verifyMembership(uint256,uint256,uint256,uint256,uint256[8]) returns (bool)",
+            "function validateMembership(uint256,uint256,uint256,uint256,uint256[8]) returns (bool)",
+        ];
+        const registry = new Contract(registryAddress, registryAbi, provider);
+        let semaphoreAddress;
+        let groupId;
+        try {
+            [semaphoreAddress, groupId] = await Promise.all([
+                registry.semaphore({ blockTag: latestBlock }),
+                registry.groupId({ blockTag: latestBlock }),
+            ]);
+        } catch { fail("registry metadata lookup failed", EXIT_RPC); }
+        if (!isAddress(semaphoreAddress) || await provider.getCode(semaphoreAddress, latestBlock) === "0x") fail("registry Semaphore address has no bytecode", EXIT_RPC);
+        const fetchStarted = performance.now();
+        const logs = await fetchGroupLogs(provider, semaphoreAddress, groupId, fromBlock, latestBlock);
+        const eventFetchMs = elapsed(fetchStarted);
+        const reconstructionStarted = performance.now();
+        const { group, insertions } = replayGroupLogs(logs);
+        const semaphore = new Contract(semaphoreAddress, [
+            "function getMerkleTreeRoot(uint256) view returns (uint256)",
+            "function getMerkleTreeDepth(uint256) view returns (uint256)",
+            "function getMerkleTreeSize(uint256) view returns (uint256)",
+        ], provider);
+        let onChainRoot;
+        let onChainDepth;
+        let onChainSize;
+        try {
+            [onChainRoot, onChainDepth, onChainSize] = await Promise.all([
+                semaphore.getMerkleTreeRoot(groupId, { blockTag: latestBlock }),
+                semaphore.getMerkleTreeDepth(groupId, { blockTag: latestBlock }),
+                semaphore.getMerkleTreeSize(groupId, { blockTag: latestBlock }),
+            ]);
+        } catch { fail("Semaphore state lookup failed", EXIT_RPC); }
+        if (group.root !== onChainRoot || BigInt(group.depth) !== onChainDepth || BigInt(group.size) !== onChainSize) {
+            fail("reconstructed group does not match on-chain root, depth, and size", EXIT_RPC);
+        }
+        if (group.indexOf(identity.commitment) < 0) fail("identity is not an active member of the reconstructed group", EXIT_FILE);
+        if (group.depth === 0 || group.depth > MAX_TREE_DEPTH) fail(`reconstructed tree depth must be 1-${MAX_TREE_DEPTH}`, EXIT_FILE);
+        const activeMembers = group.members.filter((member) => member !== 0n).length;
+        const reconstructionMs = elapsed(reconstructionStarted);
+        const proofStarted = performance.now();
+        const proof = await generateProof(identity, group, message, groupId);
+        const proofGenerationMs = elapsed(proofStarted);
+        const gasStarted = performance.now();
+        const gasEstimates = await estimateProofGas(registry, proof);
+        const gasEstimationMs = elapsed(gasStarted);
+        output({
+            merkleTreeDepth: proof.merkleTreeDepth,
+            merkleTreeRoot: proof.merkleTreeRoot,
+            nullifier: proof.nullifier,
+            message: proof.message,
+            scope: proof.scope,
+            points: proof.points,
+            chain: {
+                chainId: expectedChainId.toString(),
+                registry: registryAddress,
+                semaphore: semaphoreAddress,
+                groupId: groupId.toString(),
+                fromBlock,
+                toBlock: latestBlock,
+                eventCount: logs.length,
+                insertionSlots: insertions,
+                activeMembers,
+            },
+            metrics: { deploymentDiscoveryMs, eventFetchMs, reconstructionMs, proofGenerationMs, gasEstimationMs, totalMs: elapsed(totalStarted) },
+            gasEstimates,
+        });
+    } catch (error) {
+        if (error instanceof CliError) throw error;
+        fail("chain proof generation failed", EXIT_RPC);
+    } finally { provider.destroy(); }
 }
 
 async function cmdVerifyLocal(proofPath) {
@@ -189,7 +407,7 @@ async function cmdVerifyOnChain(contractAddress, proofPath, rpcUrl, chainId) {
     } catch { fail("on-chain proof verification failed", EXIT_RPC); } finally { provider.destroy(); }
 }
 
-const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
+const USAGE = "Usage: anonset-cli identity create <identity.json> [private-key-hex] [--force] | proof generate <identity.json> <group.json> [message] [scope] | proof generate-chain <identity.json|-> <registry-address> <rpc-url> <chain-id> [message] [from-block] | verify local <proof.json> | verify on-chain <address> <proof.json> <rpc-url> <chain-id>";
 
 async function run(args) {
     if (args.length === 0 || args[0] === "--help" || args[0] === "-h") { process.stdout.write(`${USAGE}\n`); return; }
@@ -201,6 +419,7 @@ async function run(args) {
         return cmdIdentityCreate(positional[0], positional[1], force);
     }
     if (command === "proof" && subcommand === "generate" && rest.length >= 2 && rest.length <= 4) return cmdProofGenerate(...rest);
+    if (command === "proof" && subcommand === "generate-chain" && rest.length >= 4 && rest.length <= 6) return cmdProofGenerateChain(...rest);
     if (command === "verify" && subcommand === "local" && rest.length === 1) return cmdVerifyLocal(rest[0]);
     if (command === "verify" && subcommand === "on-chain" && rest.length === 4) return cmdVerifyOnChain(...rest);
     fail(USAGE);

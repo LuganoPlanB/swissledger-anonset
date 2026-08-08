@@ -94,6 +94,17 @@ Aggregate deployment gas was **10,689,124**, protocol-transaction gas was
 contains receipt/block identities, per-operation measurements, runtime-code
 hashes, ABI/bytecode hashes, dependency evidence, and semantic outcomes.
 
+The chain-reconstructing CLI was also measured locally against the pinned
+Anvil stack with two insertion slots. Deployment discovery took **36.484 ms**,
+event fetch **21.335 ms**, tree reconstruction **20.530 ms**, Groth16 proof
+generation **579.703 ms**, gas estimation **136.395 ms**, and the complete
+command **890.153 ms**. The subsequently executed reusable and protected
+transactions consumed **263,982 gas** and **291,391 gas**. In that run the RPC
+estimated 85,963 and 293,845 gas respectively, illustrating that
+`eth_estimateGas` is advisory: signed receipt `gasUsed` is the authoritative
+measurement and applications must retain an appropriate transaction gas
+margin.
+
 ## Application integration and proof semantics
 
 There are two deliberate on-chain proof flows. The first is replay-permitting,
@@ -287,10 +298,38 @@ for groups created by this registry, historical roots for one hour. A proof
 generated from an older snapshot will revert after that root expires.
 
 The bundled CLI currently accepts a `group.json` containing 1–1,024 commitments
-and derives the witness locally. This is suitable for examples and bounded
-groups; larger or frequently changing groups should use an indexed/exported
-tree representation rather than repeatedly downloading a monolithic member
-list.
+and also provides a chain-reconstruction command for 1–1,024 insertion slots.
+With only the identity secret and public chain coordinates, use:
+
+```bash
+# Preferred: owner-only identity file.
+npm run anonset -- proof generate-chain identity.json \
+  <registry-address> <rpc-url> <chain-id> 0 > proof.json
+
+# Raw 32-byte hexadecimal secret from a secret manager, never a command argument.
+secret-manager read anonset-identity |
+  npm run anonset -- proof generate-chain - \
+    <registry-address> <rpc-url> <chain-id> 0 > proof.json
+```
+
+The command automatically binary-searches historical bytecode for the registry
+deployment block, reads `semaphore()` and `groupId()`, downloads member events
+in bounded block ranges, and replays them in canonical order. It verifies each
+event's emitted root and finally compares root, depth, and size against the
+same on-chain snapshot. It then checks that the secret-derived commitment is an
+active member and generates a proof scoped to the registry group ID. A pruned
+RPC may require a trusted deployment block as the optional final argument; the
+RPC must still retain the event logs.
+
+`proof.json` includes non-secret `chain`, `metrics`, and `gasEstimates` objects.
+The timings split deployment discovery, log fetch, reconstruction, Groth16
+proof generation, gas estimation, and total wall time. Gas values are decimal
+`eth_estimateGas` results for the five-argument reusable and protected calls,
+or `null` when estimation is unavailable. The output deliberately omits the
+identity commitment and leaf index, because attaching either to the proof
+would reveal which public member produced it. Larger or frequently changing
+groups should use an indexed/exported tree representation rather than replaying
+the full history for every proof.
 
 ### Member-count cost scaling
 
@@ -388,6 +427,7 @@ The current handoff status and explicit external blockers are in
 
 ```bash
 npm run anonset -- identity create identity.json
+npm run anonset -- proof generate-chain identity.json <registry-address> <rpc-url> <chain-id> 0
 npm run anonset -- proof generate identity.json group.json 0 <group-id>
 npm run anonset -- verify local proof.json
 npm run anonset -- verify on-chain <registry-address> proof.json <rpc-url> <chain-id>
