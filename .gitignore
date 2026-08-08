@@ -11,3 +11,5 @@ out
 /artifacts/
 /broadcast/
 /fixtures/
+/.vitepress/cache/
+/.vitepress/dist/

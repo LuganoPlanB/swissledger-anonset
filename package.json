@@ -14,6 +14,9 @@
     "reproducible-build": "node scripts/verify-reproducibility.mjs",
     "check:dependencies": "node scripts/check-dependency-integrity.mjs",
     "licenses": "node scripts/generate-license-report.mjs",
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build && node scripts/check-docs-build.mjs",
+    "docs:preview": "vitepress preview",
     "anonset": "node clients/anonset/anonset-cli.mjs",
     "generate-proof": "node clients/anonset/anonset-cli.mjs proof",
     "verify-proof": "node clients/anonset/anonset-cli.mjs verify",
@@ -40,8 +43,10 @@
     "@semaphore-protocol/contracts": "4.14.3",
     "@zk-kit/lean-imt.sol": "^2.0.1",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "lugano-planb-vite-theme": "https://github.com/LuganoPlanB/vite-theme/releases/download/v0.3.0/lugano-planb-vite-theme.tar.gz",
     "poseidon-solidity": "^0.0.5",
     "semantic-release": "25.0.5",
-    "solhint": "5.0.5"
+    "solhint": "5.0.5",
+    "vitepress": "1.6.4"
   }
 }

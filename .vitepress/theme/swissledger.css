@@ -1,0 +1,103 @@
+/*
+ * SPDX-FileCopyrightText: 2026 PlanB foundation
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+:root {
+    --vp-font-family-base: var(--planb-font-family);
+    --vp-c-bg: var(--planb-color-canvas);
+    --vp-c-bg-alt: var(--planb-color-canvas-alt);
+    --vp-c-bg-soft: var(--planb-color-panel-strong);
+    --vp-c-bg-elv: var(--planb-color-panel);
+    --vp-c-text-1: var(--planb-color-text);
+    --vp-c-text-2: var(--planb-color-text-soft);
+    --vp-c-brand-1: var(--planb-color-accent);
+    --vp-c-brand-2: var(--planb-color-accent-strong);
+    --vp-c-brand-3: var(--planb-color-neon-violet);
+    --vp-c-divider: color-mix(in srgb, var(--planb-color-accent) 22%, transparent);
+    --vp-c-gutter: color-mix(in srgb, var(--planb-color-accent) 14%, transparent);
+    --vp-code-block-bg: color-mix(in srgb, var(--planb-color-panel-strong) 92%, var(--planb-color-accent) 8%);
+}
+
+body {
+    background: var(--planb-body-background);
+}
+
+.VPNavBar,
+.VPLocalNav {
+    border-bottom-color: color-mix(in srgb, var(--planb-color-accent) 22%, transparent) !important;
+    background: color-mix(in srgb, var(--planb-color-canvas) 88%, transparent) !important;
+    backdrop-filter: blur(18px);
+}
+
+.VPNavBarTitle .title {
+    color: var(--planb-color-accent-strong);
+    font-weight: 800;
+}
+
+.VPNavBarTitle .planb-brand__mark {
+    flex: none;
+    margin-right: 0.7rem;
+}
+
+.VPSidebar {
+    background: color-mix(in srgb, var(--planb-color-canvas-alt) 94%, transparent);
+}
+
+.VPDoc .content-container {
+    padding: clamp(1.25rem, 3vw, 2.5rem);
+    border: var(--planb-border-soft);
+    border-radius: 18px;
+    background: var(--planb-panel-background);
+    box-shadow: var(--planb-shadow-panel);
+}
+
+.vp-doc h1 {
+    max-width: 18ch;
+    color: var(--planb-color-accent-strong);
+    font-size: clamp(2.4rem, 7vw, 4.5rem);
+    font-weight: 800;
+    line-height: 1.04;
+    text-wrap: balance;
+}
+
+.vp-doc h2 {
+    color: var(--planb-color-accent);
+    background: var(--planb-gradient-heading);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.vp-doc a {
+    text-decoration-color: color-mix(in srgb, var(--planb-color-accent) 46%, transparent);
+    text-underline-offset: 0.2em;
+}
+
+.vp-doc table {
+    display: table;
+    width: 100%;
+}
+
+.vp-doc th {
+    color: var(--planb-color-accent-strong);
+    background: color-mix(in srgb, var(--planb-color-accent-soft) 28%, transparent);
+}
+
+.VPFooter {
+    border-top: var(--planb-border-soft);
+    background: color-mix(in srgb, var(--planb-color-canvas-alt) 92%, transparent);
+}
+
+@media (max-width: 767px) {
+    .VPDoc .content-container {
+        padding: 1rem;
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0;
+    }
+
+    .vp-doc h1 {
+        font-size: clamp(2.15rem, 12vw, 3.4rem);
+    }
+}

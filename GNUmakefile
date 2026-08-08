@@ -3,13 +3,14 @@ FORGE := $(BIN_DIR)/swissledger-forge
 CAST := $(BIN_DIR)/swissledger-cast
 ANVIL := $(BIN_DIR)/swissledger-anvil
 
-.PHONY: help setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-rotation test-all test ci
+.PHONY: help setup toolchain-install toolchain-info assert-toolchain generate-build-info check-build-info build docs-build artifact-compatibility reproducible-build test-artifact-compatibility dependency-integrity dependency-evidence format solidity-analysis coverage test-build test-solidity test-client test-smoke test-smoke-isolation test-rotation test-all test ci
 
 help:
 	@printf '%s\n' 'Swissledger AnonSet targets:' \
 	  '  make toolchain-install  install checksummed SwissLedger Foundry v1.11.0 into ./bin' \
 	  '  make toolchain-info     verify the pinned local toolchain' \
 	  '  make build              generate BuildInfo and compile Istanbul artifacts' \
+	  '  make docs-build         build and validate the VitePress documentation site' \
 	  '  make test               run the complete local/CI quality gate' \
 	  '  make test-client        run Node client tests' \
 	  '  make test-solidity      run Forge unit/fuzz tests' \
@@ -43,6 +44,9 @@ check-build-info:
 
 build: assert-toolchain generate-build-info
 	$(FORGE) build
+
+docs-build:
+	npm run docs:build
 
 artifact-compatibility: build
 	node scripts/check-artifact-compatibility.mjs
@@ -91,7 +95,7 @@ test-smoke-isolation: assert-toolchain generate-build-info
 test-rotation: assert-toolchain generate-build-info
 	timeout 120 env ANONSET_ROTATION_SCENARIO=1 ./scripts/e2e-smoke
 
-test-all: check-build-info format dependency-integrity build artifact-compatibility reproducible-build test-build test-client test-solidity solidity-analysis coverage test-smoke test-smoke-isolation test-rotation
+test-all: check-build-info format dependency-integrity build docs-build artifact-compatibility reproducible-build test-build test-client test-solidity solidity-analysis coverage test-smoke test-smoke-isolation test-rotation
 
 test: test-all
 

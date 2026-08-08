@@ -483,6 +483,32 @@ rules, safe identity handling, checkpoint/rotation states, and local/on-chain
 verification. See [scripts/README.md](scripts/README.md) for the build,
 deployment, evidence, smoke, and release helper catalog.
 
+## Documentation website
+
+The VitePress website is generated directly from the repository's existing
+first-party Markdown. Those files remain the canonical sources: edit this
+`README.md`, `USAGE.md`, the client and script READMEs, or the pages under
+`docs/` in place. Do not copy their prose into `.vitepress/`.
+
+The small [index.md](index.md) entry point includes this README as the home
+page, while VitePress excludes `README.md` as a separate route. Vendored
+third-party documentation is also excluded. This produces one maintained
+source and one website page for each document without relying on symlinks,
+which behave inconsistently across checkouts and hosting environments.
+
+```bash
+npm run docs:dev       # local live-reload server
+make docs-build        # production build plus canonical-page validation
+npm run docs:preview   # preview the production output
+```
+
+The site extends the local Plan B theme published by the sibling
+`vite-theme` project as `lugano-planb-vite-theme`. A pinned release archive is
+recorded in `package-lock.json`; local sibling state is never an undeclared
+build input. Pushes to `main` that change documentation or website files run
+the pinned [GitHub Pages workflow](.github/workflows/docs.yml). Repository
+Pages must use **GitHub Actions** as its source.
+
 ## Versioning and release
 
 The package is private. Conventional commits drive GitHub-only semantic-release

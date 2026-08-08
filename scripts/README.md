@@ -18,6 +18,7 @@ are ignored unless a workflow deliberately packages and secret-scans them.
 | `check-artifact-compatibility.mjs` | Inspects the four deployment artifacts for executed Istanbul-incompatible opcodes, bytecode/initcode limits, code-deposit gas, and linked-library identity; used by `make artifact-compatibility`. |
 | `check-coverage.mjs <forge-coverage-report>` | Parses a Forge coverage report and rejects registry coverage below 95% lines or 85% branches; used by `make coverage`. |
 | `check-dependency-integrity.mjs` | Verifies exact Semaphore v4 pins and security overrides in both package manifests; used by `make dependency-integrity`. |
+| `check-docs-build.mjs` | Verifies that the VitePress output contains every first-party canonical Markdown page exactly once and that `README.md` was not emitted as a duplicate route; run by `npm run docs:build`. |
 | `e2e-smoke` | Starts a dynamic-port local Anvil, deploys the linked stack, exercises reusable/protected proofs, removal, progressive checkpoint/reorg behavior, and cleans up temporary state. Set `ANONSET_ROTATION_SCENARIO=1` only through `make test-rotation` for the 65-member rotation/recovery scenario. |
 | `generate-build-info.mjs [--check]` | Atomically derives `src/generated/BuildInfo.sol` from `package.json`; `--check` rejects drift without writing. Test-only source/target overrides use `BUILD_INFO_PACKAGE` and `BUILD_INFO_TARGET`. |
 | `generate-license-report.mjs [--output <path>]` | Emits a sorted JSON license inventory for production npm packages to stdout or the requested file; used by dependency evidence and release packaging. |
@@ -39,6 +40,7 @@ are ignored unless a workflow deliberately packages and secret-scans them.
 make toolchain-install       # install checksummed binaries
 make artifact-compatibility # scan deployment bytecode
 make coverage               # Forge report plus thresholds
+make docs-build             # build and validate the documentation website
 make test-smoke             # one local protocol smoke
 make test-rotation          # one expensive 65-member rotation smoke
 make dependency-evidence    # ignored SBOM and license reports

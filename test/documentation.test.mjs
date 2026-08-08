@@ -92,3 +92,26 @@ test("documented CLI interface matches current help", () => {
         }
     }
 });
+
+test("documentation website has one canonical source and a pinned Pages boundary", () => {
+    const home = text("index.md");
+    const config = text(".vitepress/config.mts");
+    const theme = text(".vitepress/theme/index.mjs");
+    const workflow = text(".github/workflows/docs.yml");
+    const packageJson = JSON.parse(text("package.json"));
+
+    assert.match(home, /<!--@include: \.\/README\.md-->/);
+    assert.match(config, /srcExclude: \["README\.md", "vendor\/\*\*"\]/);
+    assert.match(theme, /lugano-planb-vite-theme\/theme\.css/);
+    assert.equal(packageJson.devDependencies.vitepress, "1.6.4");
+    assert.equal(
+        packageJson.devDependencies["lugano-planb-vite-theme"],
+        "https://github.com/LuganoPlanB/vite-theme/releases/download/v0.3.0/lugano-planb-vite-theme.tar.gz",
+    );
+    assert.match(workflow, /push:\s*\n\s+branches: \[main\]/);
+    assert.doesNotMatch(workflow, /pull_request:/);
+    assert.match(workflow, /pages: write/);
+    assert.match(workflow, /id-token: write/);
+    assert.match(workflow, /actions\/checkout@[0-9a-f]{40}/);
+    assert.match(workflow, /actions\/deploy-pages@[0-9a-f]{40}/);
+});

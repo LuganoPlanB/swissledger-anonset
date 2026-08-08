@@ -64,6 +64,7 @@ for the latest commit, deployed addresses, receipts, hashes, gas, and timings.
 | CI and release boundaries | `.github/workflows/test.yml`, `.github/workflows/release.yml` |
 | Operator procedures | `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/READINESS.md` |
 | Script catalog | `scripts/README.md` |
+| Documentation website | Canonical `*.md` files, `index.md`, `.vitepress/`, `.github/workflows/docs.yml` |
 
 ## Standard workflow
 
@@ -92,6 +93,7 @@ make test-rotation
 make artifact-compatibility
 make reproducible-build
 make coverage
+make docs-build
 ```
 
 Before declaring work complete, always run:
@@ -107,6 +109,13 @@ pass from one focused target. Expected current measurements are 42 Solidity
 tests, 96.04% registry line coverage, 86.67% registry branch coverage, and zero
 production audit findings; investigate unexplained changes rather than merely
 updating documented numbers.
+
+Documentation has one source of truth. Edit the existing first-party Markdown
+in place; never copy it into `.vitepress/`. `index.md` includes `README.md` as
+the site home, the VitePress build excludes the duplicate README route and
+vendored Markdown, and `make docs-build` enforces the emitted-page contract.
+The website consumes the pinned release archive of the sibling `vite-theme`
+project and deploys to GitHub Pages only from `main`.
 
 ## Client contract
 
