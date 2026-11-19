@@ -1,0 +1,98 @@
+name: zenroom-test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  ZENROOM_URL: "https://github.com/dyne/Zenroom/releases/download/v5.38.1/zenroom"
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    env:
+      RPC_URL: http://127.0.0.1:8545
+      # This is a private key of a wallet. But since we're using anvil, it is public...
+      PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      CHAIN_ID: 31337
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwissLedger Foundry
+        run: ./scripts/install-swissledger-toolchain
+      - uses: actions/setup-node@v4
+        with: { node-version: 24}
+      - name: install packages
+        run: npm ci
+      - name: build contracts
+        run: bin/swissledger-forge build
+      - name: Install Zenroom
+        run: |
+          # download zenroom
+          curl -fsSL "$ZENROOM_URL" -o "$RUNNER_TEMP/zenroom"
+          # make it executable
+          chmod +x "$RUNNER_TEMP/zenroom"
+          # save its path for the next steps
+          echo "ZENROOM=$RUNNER_TEMP/zenroom" >> "$GITHUB_ENV"
+      - name: Start anvil
+        run: |
+          nohup bin/swissledger-anvil --silent > anvil.log 2>&1 &
+          until bin/swissledger-cast chain-id --rpc-url "$RPC_URL" >/dev/null 2>&1; do sleep 1; done
+
+      - name: deploy contracts
+        run: |
+          DEPLOY_MANIFEST="out/deploy.json" bin/swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --broadcast
+          # to see the file in the log (or cat "$DEPLOY_MANIFEST" )
+          # cat out/deploy.json
+          echo "registry=$(jq -r .registry out/deploy.json)" >> "$GITHUB_OUTPUT"
+        id: deploy
+
+      - name: zenroom test
+        env:
+          CONTRACT: ${{ steps.deploy.outputs.registry }}
+          ADDRESS2: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+          KEY2: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+        run: bash zenroom/run.sh
+
+  smoke:
+    needs: unit
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      RPC_URL: https://testnet-swiss-ledger-rpc.noku.io
+      PRIVATE_KEY: ${{ secrets.SWISSLEDGER_TESTNET_BEACUR }}
+      CHAIN_ID: 222
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwissLedger Foundry
+        run: ./scripts/install-swissledger-toolchain
+      - uses: actions/setup-node@v4
+        with: { node-version: 24}
+      - name: install packages
+        run: npm ci
+      - name: build contracts
+        run: bin/swissledger-forge build
+      - name: Install Zenroom
+        run: |
+          # download zenroom
+          curl -fsSL "$ZENROOM_URL" -o "$RUNNER_TEMP/zenroom"
+          # make it executable
+          chmod +x "$RUNNER_TEMP/zenroom"
+          # save its path for the next steps
+          echo "ZENROOM=$RUNNER_TEMP/zenroom" >> "$GITHUB_ENV"
+      - name: deploy contracts
+        run: |
+          DEPLOY_MANIFEST="out/deploy.json" bin/swissledger-forge script script/DeployMerkleRootRegistryZK.s.sol \
+            --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --legacy
+          # to see the file in the log (or cat "$DEPLOY_MANIFEST" )
+          # cat out/deploy.json
+          echo "registry=$(jq -r .registry out/deploy.json)" >> "$GITHUB_OUTPUT"
+        id: deploy
+      - name: zenroom test
+        env:
+          CONTRACT: ${{ steps.deploy.outputs.registry }}
+          ADDRESS2: "0x90640C652c7F5d90f0Fb9E729Fe4400c52d4C67a"
+          KEY2: ${{ secrets.SWISSLEDGER_TESTNET_DEPLOY }}
+        run: bash zenroom/run.sh
+
+      
