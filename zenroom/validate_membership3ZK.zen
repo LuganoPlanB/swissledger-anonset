@@ -1,0 +1,17 @@
+Scenario ethereum
+
+Given I have the 'keyring'
+Given I have a 'gas price'
+Given I have a 'gas limit'
+Given I have a 'ethereum nonce'
+Given I have a 'string' named 'depth'
+Given I have a 'string' named 'num_root'
+Given I have a 'string' named 'nullifier'
+Given I have a 'string array' named 'points'
+Given I have a 'ethereum address' named 'contract_address'
+
+When I create ethereum transaction to 'contract_address'
+When I use ethereum transaction to validate membership with merkle tree depth 'depth' and root 'num_root' and nullifier 'nullifier' and points 'points'
+When I create signed ethereum transaction for chain '222'
+
+Then print 'signed ethereum transaction'
